@@ -1,0 +1,13 @@
+backend/model_weights/
+*.pth
+*.bin
+*.pt
+*.safetensors
+
+# Python standard ignores
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+.pytest_cache/

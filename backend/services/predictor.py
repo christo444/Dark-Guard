@@ -1,11 +1,16 @@
 from typing import List
+import os
 from models.schemas import PredictionResult
-from models.dummy_model import DummyBertModel
+from models.bert_model import BertModel
 
 class PredictorService:
     def __init__(self):
-        # We will load the actual BERT model here later
-        self.model = DummyBertModel()
+        # Determine path to the extracted model weights
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        model_path = os.path.join(base_dir, "model_weights", "darkguard-bert-final")
+        
+        # Load the actual BERT model
+        self.model = BertModel(model_path)
 
     def process_texts(self, texts: List[str]) -> List[PredictionResult]:
         results = []
