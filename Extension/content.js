@@ -14,8 +14,20 @@ const analyzedTexts = new Set();
 // Store highlighted text
 const highlightedTexts = new Set();
 
+// Ignore mutation records created by Dark-Guard highlights
+const ignoredMutationTargets = new WeakSet();
+
 // Used for MutationObserver debounce
 let detectionTimeout = null;
+
+function normalizeText(text) {
+
+    return text
+        .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, "<countdown>")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+}
 
 
 // ============================================
@@ -29,6 +41,7 @@ function extractTexts() {
     );
 
     const texts = [];
+    const normalizedTexts = new Set();
 
     elements.forEach(element => {
 
@@ -50,6 +63,29 @@ function extractTexts() {
             return;
         }
 
+        const normalizedText = normalizeText(text);
+
+        if (!normalizedText || normalizedTexts.has(normalizedText)) {
+            return;
+        }
+
+        // Prefer the smallest candidate containing this visible message.
+        const hasMeaningfulDescendant = [...element.querySelectorAll(
+            "p, span, div, button, a, h1, h2, h3, h4, h5, label"
+        )].some(descendant => {
+            const descendantText = descendant.innerText?.trim();
+            const normalizedDescendantText = descendantText && normalizeText(descendantText);
+            return normalizedDescendantText && (
+                normalizedDescendantText === normalizedText ||
+                normalizedText.includes(normalizedDescendantText)
+            );
+        });
+
+        if (hasMeaningfulDescendant) {
+            return;
+        }
+
+        normalizedTexts.add(normalizedText);
         texts.push(text);
     });
 
@@ -138,7 +174,9 @@ function highlightDarkPattern(result) {
 
 
     // Prevent highlighting the same text twice
-    if (highlightedTexts.has(targetText)) {
+    const normalizedTargetText = normalizeText(targetText);
+
+    if (highlightedTexts.has(normalizedTargetText)) {
         return;
     }
 
@@ -177,26 +215,22 @@ function highlightDarkPattern(result) {
 
 
         // Don't highlight our own generated elements
-        if (
-            node.parentElement &&
-            node.parentElement.classList.contains(
-                "dark-pattern-highlight"
-            )
-        ) {
+        if (node.parentElement?.closest(".dark-pattern-highlight")) {
             return;
         }
 
 
-        createHighlight(
+        const wasHighlighted = createHighlight(
             node,
             targetText,
             result
         );
 
+        if (wasHighlighted) {
+            highlightedTexts.add(normalizedTargetText);
+        }
+
     });
-
-
-    highlightedTexts.add(targetText);
 }
 
 
@@ -294,12 +328,18 @@ function createHighlight(
     // Replace original text
     if (node.parentNode) {
 
+        ignoredMutationTargets.add(node.parentNode);
+
         node.parentNode.replaceChild(
             fragment,
             node
         );
 
+        return true;
     }
+
+
+    return false;
 }
 
 
@@ -329,7 +369,7 @@ async function runDetector() {
     const newTexts =
         allTexts.filter(
             text =>
-                !analyzedTexts.has(text)
+                !analyzedTexts.has(normalizeText(text))
         );
 
 
@@ -352,7 +392,7 @@ async function runDetector() {
     // Mark texts as analyzed
     newTexts.forEach(
         text =>
-            analyzedTexts.add(text)
+            analyzedTexts.add(normalizeText(text))
     );
 
 
@@ -403,7 +443,29 @@ runDetector();
 // ============================================
 
 const observer =
-    new MutationObserver(() => {
+    new MutationObserver(mutations => {
+
+        const ignoredTargetsInBatch = new Set();
+
+        const hasExternalMutation = mutations.some(mutation => {
+
+            if (ignoredMutationTargets.has(mutation.target)) {
+                ignoredTargetsInBatch.add(mutation.target);
+                return false;
+            }
+
+            return !mutation.target.parentElement?.closest(
+                ".dark-pattern-highlight"
+            );
+        });
+
+        ignoredTargetsInBatch.forEach(target => {
+            ignoredMutationTargets.delete(target);
+        });
+
+        if (!hasExternalMutation) {
+            return;
+        }
 
         // Cancel previous timer
         clearTimeout(
