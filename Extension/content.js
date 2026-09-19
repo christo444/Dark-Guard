@@ -54,7 +54,7 @@ function extractTexts() {
         }
 
         // Ignore very short text
-        if (text.length < 10) {
+        if (text.length < 4) {
             return;
         }
 
