@@ -1,10 +1,18 @@
 import os
 import json
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+try:
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+except ImportError:
+    AutoTokenizer = None
+    AutoModelForSequenceClassification = None
 
 class BertModel:
     def __init__(self, model_dir: str):
+        if AutoTokenizer is None or AutoModelForSequenceClassification is None:
+            raise ImportError("The 'transformers' package is not installed.")
+            
         print(f"Loading BERT model from {model_dir}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_dir)
