@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -91,7 +92,7 @@
             background: #ffffff;
             border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
             margin-bottom: 32px;
             text-align: center;
             padding: 16px;
@@ -131,7 +132,7 @@
             border-radius: 10px;
             border: 1px solid #e2e8f0;
             padding: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -224,7 +225,7 @@
             border: 1px solid #e2e8f0;
             border-radius: 10px;
             padding: 14px 18px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
             display: flex;
             align-items: center;
             gap: 12px;
@@ -257,6 +258,7 @@
         }
     </style>
 </head>
+
 <body>
 
     <!-- Announcement Bar -->
@@ -281,14 +283,13 @@
 
         <!-- Visual Hero Banner (Embedded Image Dark Pattern) -->
         <div class="hero-banner-card">
-            <div style="margin-bottom: 8px; font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 700;">
+            <div
+                style="margin-bottom: 8px; font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 700;">
                 Featured Promotional Banner (Image-embedded text):
             </div>
             <!-- Image containing embedded text: "Hurry! Only 2 items left in stock" -->
-            <img src="./images/banner_urgency.jpg" 
-                 alt="Flash Sale Banner" 
-                 class="hero-banner-img" 
-                 id="promo-banner-urgency">
+            <img src="./images/banner_urgency.jpg" alt="Flash Sale Banner" class="hero-banner-img"
+                id="promo-banner-urgency">
         </div>
 
         <div class="section-header">
@@ -318,9 +319,8 @@
                 <div>
                     <div class="product-img-wrapper">
                         <!-- Image containing embedded text: "52 people bought this exclusive deal" -->
-                        <img src="./images/banner_social_proof.jpg" 
-                             alt="Smartwatch Deal Banner" 
-                             id="deal-banner-social">
+                        <img src="./images/banner_social_proof.jpg" alt="Smartwatch Deal Banner"
+                            id="deal-banner-social">
                     </div>
                     <h3 class="product-title">Pulse X Active Smartwatch</h3>
                     <div class="product-price">$129.99 <span class="original-price">$179.99</span></div>
@@ -360,6 +360,45 @@
     </footer>
 
     <!-- Dark-Guard Content Script (auto-loads if opened as standalone webpage) -->
-    <script src="../Extension/content.js" defer></script>
+    <!--<script src="../Extension/content.js" defer></script>-->
+    <!-- FAKE (ticks live, but resets to 10:00 every reload — no persisted deadline) -->
+    <div id="dg-fake-countdown" style="padding:10px; background:#fee2e2; text-align:center; font-weight:bold;">
+        Sale ends in: 10:00
+    </div>
+
+    <!-- REAL (deadline persisted in localStorage — survives reloads correctly) -->
+    <div id="dg-real-countdown" style="padding:10px; background:#dcfce7; text-align:center; font-weight:bold;">
+        Offer ends in: --:--
+    </div>
+
+    <script>
+        (function () {
+            let fakeSeconds = 600;
+            const fakeEl = document.getElementById("dg-fake-countdown");
+            setInterval(() => {
+                fakeSeconds = Math.max(0, fakeSeconds - 1);
+                const m = String(Math.floor(fakeSeconds / 60)).padStart(2, "0");
+                const s = String(fakeSeconds % 60).padStart(2, "0");
+                fakeEl.textContent = `Sale ends in: ${m}:${s}`;
+            }, 1000);
+
+            const key = "dg_real_deadline";
+            let deadline = Number(localStorage.getItem(key));
+            if (!deadline) {
+                deadline = Date.now() + 10 * 60 * 1000;
+                localStorage.setItem(key, deadline);
+            }
+            const realEl = document.getElementById("dg-real-countdown");
+            function tickReal() {
+                const remaining = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+                const m = String(Math.floor(remaining / 60)).padStart(2, "0");
+                const s = String(remaining % 60).padStart(2, "0");
+                realEl.textContent = `Offer ends in: ${m}:${s}`;
+            }
+            tickReal();
+            setInterval(tickReal, 1000);
+        })();
+    </script>
 </body>
+
 </html>

@@ -35,3 +35,41 @@ class BatchImagePredictRequest(BaseModel):
 
 class BatchImagePredictResponse(BaseModel):
     results: List[ImagePredictResponse]
+
+
+# ------------------------------------------------------------------
+# Countdown Timer Behavioral Verification
+# ------------------------------------------------------------------
+# Unlike text/image dark patterns, a countdown timer can't be judged
+# from a single snapshot. The extension observes the element's
+# behavior (does it reset on reload? is there a real stored deadline?
+# does it ever hit zero and actually do something?) and sends that
+# evidence here for scoring.
+
+class CountdownEvidence(BaseModel):
+    reset_on_reload: bool = False
+    persisted_deadline_found: bool = False
+    looped_or_jumped: bool = False
+    no_consequence_at_zero: bool = False
+    initial_value_seconds: Optional[float] = None
+    observed_remaining_seconds: Optional[float] = None
+    expected_remaining_seconds: Optional[float] = None
+
+class CountdownVerifyRequest(BaseModel):
+    page_url: str
+    element_selector: str
+    evidence: CountdownEvidence
+    element_text_sample: Optional[str] = None
+
+class CountdownVerifyResponse(BaseModel):
+    element_selector: str
+    is_dark_pattern: bool
+    category: str = "FAKE_COUNTDOWN"
+    confidence: float
+    evidence: CountdownEvidence
+
+class BatchCountdownVerifyRequest(BaseModel):
+    countdowns: List[CountdownVerifyRequest]
+
+class BatchCountdownVerifyResponse(BaseModel):
+    results: List[CountdownVerifyResponse]

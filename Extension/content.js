@@ -8,6 +8,11 @@ console.log("Dark-Guard extension loaded!");
 const API_URL = "http://localhost:8000/predict";
 const IMAGE_API_URL = "http://localhost:8000/predict-image";
 const BATCH_IMAGE_API_URL = "http://localhost:8000/predict-images";
+const COUNTDOWN_API_URL = "http://localhost:8000/verify-countdown";
+
+const COUNTDOWN_OBSERVE_WINDOW_MS = 8000;
+const TIME_PATTERN = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
+const COUNTDOWN_ATTR_PATTERN = /countdown|timer|clock|expir|deal-?end|sale-?end/i;
 
 // Store text that has already been analyzed
 const analyzedTexts = new Set();
@@ -20,6 +25,12 @@ const analyzedImages = new Set();
 
 // Store images that have already been highlighted
 const highlightedImages = new Set();
+
+// Store countdown elements currently being tracked/already tracked this page load
+const analyzedCountdowns = new Set();
+
+// Store countdown elements already flagged as fake (by persistent selector)
+const flaggedCountdowns = new Set();
 
 // Ignore mutation records created by Dark-Guard highlights
 const ignoredMutationTargets = new WeakSet();
@@ -458,7 +469,327 @@ function highlightImageDarkPattern(result) {
 
 
 // ============================================
-// 8. TEXT DETECTOR RUNNER
+// 8. EXTRACT COUNTDOWN TIMERS
+// ============================================
+
+function parseTimeToSeconds(text) {
+    const match = text.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!match) {
+        return null;
+    }
+
+    const parts = match.slice(1).filter(Boolean).map(Number);
+
+    if (parts.length === 3) {
+        return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    if (parts.length === 2) {
+        return parts[0] * 60 + parts[1];
+    }
+    return null;
+}
+
+// A lightweight, mostly-stable selector used as a storage key so we can
+// recognize "the same timer" across page reloads/navigations, separate
+// from the random per-load dataset id used to avoid re-tracking within
+// a single page session.
+function generatePersistentSelector(el) {
+    if (el.id) {
+        return `#${el.id}`;
+    }
+
+    const path = [];
+    let node = el;
+
+    while (node && node.nodeType === 1 && path.length < 5) {
+        let selector = node.tagName.toLowerCase();
+
+        if (node.className && typeof node.className === "string") {
+            const cls = node.className.trim().split(/\s+/).slice(0, 2).join(".");
+            if (cls) {
+                selector += `.${cls}`;
+            }
+        }
+
+        const parent = node.parentElement;
+        if (parent) {
+            const siblings = Array.from(parent.children).filter(c => c.tagName === node.tagName);
+            if (siblings.length > 1) {
+                selector += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+            }
+        }
+
+        path.unshift(selector);
+        node = node.parentElement;
+    }
+
+    return path.join(" > ");
+}
+
+function findCandidateCountdowns() {
+    const elements = document.querySelectorAll("body *");
+    const candidates = [];
+
+    elements.forEach(el => {
+        // Prefer leaf-ish elements; skip anything already being tracked
+        if (el.children.length > 3) {
+            return;
+        }
+        if (el.dataset.darkguardCountdownId) {
+            return;
+        }
+
+        const idClass = `${el.id} ${el.className}`;
+        const text = el.innerText?.trim();
+
+        if (!text || text.length > 60) {
+            return;
+        }
+
+        const matchesHint = COUNTDOWN_ATTR_PATTERN.test(idClass) || TIME_PATTERN.test(text);
+        if (!matchesHint) {
+            return;
+        }
+
+        // Must actually parse to a live clock value, not just contain digits
+        if (parseTimeToSeconds(text) === null) {
+            return;
+        }
+
+        candidates.push(el);
+    });
+
+    return candidates;
+}
+
+
+// ============================================
+// 9. BEHAVIORAL VERIFICATION (OBSERVE + SCORE)
+// ============================================
+
+function getCountdownStorageKey(persistentSelector) {
+    return `darkguard_countdown_${location.hostname}_${persistentSelector}`;
+}
+
+// Falls back to an in-memory store when running outside a real extension
+// context (e.g. index.html's own <script src="../Extension/content.js">
+// tag, opened without the extension loaded). This keeps content.js from
+// throwing on `chrome is not defined` in that mode. The trade-off: without
+// real chrome.storage, nothing persists across an actual page reload, so
+// reset-on-reload detection only works when the real extension is loaded.
+const hasExtensionStorage = typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
+const inMemoryCountdownStore = {};
+
+function loadPriorCountdownRecord(persistentSelector) {
+    const key = getCountdownStorageKey(persistentSelector);
+
+    if (!hasExtensionStorage) {
+        return Promise.resolve(inMemoryCountdownStore[key] || null);
+    }
+
+    return new Promise(resolve => {
+        chrome.storage.local.get([key], res => resolve(res[key] || null));
+    });
+}
+
+function saveCountdownRecord(persistentSelector, record) {
+    const key = getCountdownStorageKey(persistentSelector);
+
+    if (!hasExtensionStorage) {
+        inMemoryCountdownStore[key] = record;
+        return;
+    }
+
+    chrome.storage.local.set({ [key]: record });
+}
+
+function detectLoopOrJump(readings) {
+    for (let i = 1; i < readings.length; i++) {
+        const delta = readings[i].seconds - readings[i - 1].seconds;
+        if (delta > 1) return true;   // ticked upward -> loop/reset
+        if (delta < -5) return true;  // dropped far more than elapsed time
+    }
+    return false;
+}
+
+function scanStorageForDeadline(approxTargetEpoch) {
+    // Look for a plausible real target timestamp in localStorage/sessionStorage,
+    // within +/- 60s of what this countdown implies (handles both
+    // second-based and millisecond-based epoch timestamps).
+    const stores = [localStorage, sessionStorage];
+
+    for (const store of stores) {
+        for (let i = 0; i < store.length; i++) {
+            const key = store.key(i);
+            const val = store.getItem(key);
+            const num = Number(val);
+            if (!Number.isFinite(num)) continue;
+
+            const asMs = num > 1e12 ? num : num * 1000;
+            if (Math.abs(asMs - approxTargetEpoch) < 60000) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function trackCountdownElement(el) {
+    const countdownId = `dg-countdown-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    el.dataset.darkguardCountdownId = countdownId;
+    analyzedCountdowns.add(countdownId);
+
+    const startText = el.innerText?.trim() || "";
+    const startSeconds = parseTimeToSeconds(startText);
+    if (startSeconds === null) {
+        return;
+    }
+
+    const startTime = Date.now();
+    const readings = [{ seconds: startSeconds, t: startTime }];
+
+    const localObserver = new MutationObserver(() => {
+        const seconds = parseTimeToSeconds(el.innerText?.trim() || "");
+        if (seconds !== null) {
+            readings.push({ seconds, t: Date.now() });
+        }
+    });
+
+    localObserver.observe(el, { childList: true, characterData: true, subtree: true });
+
+    setTimeout(async () => {
+        localObserver.disconnect();
+        await analyzeCountdown(el, startSeconds, startTime, readings);
+    }, COUNTDOWN_OBSERVE_WINDOW_MS);
+}
+
+async function analyzeCountdown(el, startSeconds, startTime, readings) {
+    const now = Date.now();
+    const elapsedSec = (now - startTime) / 1000;
+    const expectedRemaining = startSeconds - elapsedSec;
+    const lastReading = readings[readings.length - 1];
+    const observedRemaining = lastReading ? lastReading.seconds : startSeconds;
+
+    const persistentSelector = generatePersistentSelector(el);
+    const approxTargetEpoch = startTime + startSeconds * 1000;
+
+    const persistedDeadlineFound = scanStorageForDeadline(approxTargetEpoch);
+    const loopedOrJumped = detectLoopOrJump(readings);
+
+    // Compare against what we recorded last time we saw this element on
+    // this site, to catch "resets to full time every reload" timers.
+    const prior = await loadPriorCountdownRecord(persistentSelector);
+    let resetOnReload = false;
+
+    if (prior && prior.observedRemaining !== undefined) {
+        const timeSincePrior = (now - prior.lastSeenAt) / 1000;
+        const shouldHaveRemaining = prior.observedRemaining - timeSincePrior;
+        if (shouldHaveRemaining > 5 && startSeconds > shouldHaveRemaining + 15) {
+            resetOnReload = true;
+        }
+    }
+
+    saveCountdownRecord(persistentSelector, {
+        startSeconds,
+        observedRemaining,
+        lastSeenAt: now
+    });
+
+    const evidence = {
+        reset_on_reload: resetOnReload,
+        persisted_deadline_found: persistedDeadlineFound,
+        looped_or_jumped: loopedOrJumped,
+        no_consequence_at_zero: false, // TODO: needs a longer-running zero-crossing watcher
+        initial_value_seconds: startSeconds,
+        observed_remaining_seconds: observedRemaining,
+        expected_remaining_seconds: expectedRemaining
+    };
+
+    await verifyCountdown(el, persistentSelector, evidence);
+}
+
+async function verifyCountdown(el, persistentSelector, evidence) {
+    try {
+        console.log("Dark-Guard: Sending countdown evidence to backend:", evidence);
+
+        const response = await fetch(COUNTDOWN_API_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                page_url: location.href,
+                element_selector: persistentSelector,
+                evidence,
+                element_text_sample: (el.innerText || "").trim().slice(0, 60)
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Backend returned HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log("Dark-Guard: Countdown verification response:", result);
+
+        if (result.is_dark_pattern) {
+            console.log("⚠️ DARK PATTERN (COUNTDOWN):", result);
+            highlightCountdownDarkPattern(el, persistentSelector, result);
+        }
+    } catch (error) {
+        console.error("Dark-Guard API Error (Countdown):", error);
+    }
+}
+
+
+// ============================================
+// 10. HIGHLIGHT COUNTDOWN DARK PATTERN
+// ============================================
+
+function highlightCountdownDarkPattern(el, persistentSelector, result) {
+    if (flaggedCountdowns.has(persistentSelector)) {
+        return;
+    }
+    flaggedCountdowns.add(persistentSelector);
+
+    // 1. Outline the timer element itself
+    el.classList.add("dark-pattern-countdown-highlight");
+
+    const confidence = (result.confidence * 100).toFixed(1);
+    const tooltipText = `⚠️ Warning: Fake countdown detected!\nConfidence: ${confidence}%`;
+    el.title = tooltipText;
+
+    // 2. Float a badge near it, same approach as the image badge
+    const parent = el.parentElement;
+    if (!parent) {
+        return;
+    }
+
+    ignoredMutationTargets.add(parent);
+
+    const parentStyle = window.getComputedStyle(parent);
+    if (parentStyle.position === "static") {
+        parent.style.position = "relative";
+    }
+
+    const badge = document.createElement("div");
+    badge.className = "dark-pattern-countdown-badge";
+    badge.textContent = "⚠️ Fake Countdown";
+    badge.title = tooltipText;
+    parent.appendChild(badge);
+
+    const elRect = el.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const offsetX = elRect.left - parentRect.left;
+    const offsetY = elRect.top - parentRect.top;
+
+    badge.style.left = `${Math.max(0, offsetX)}px`;
+    badge.style.top = `${Math.max(0, offsetY - 20)}px`;
+}
+
+
+// ============================================
+// 11. TEXT DETECTOR RUNNER
 // ============================================
 
 async function runTextDetector() {
@@ -485,7 +816,7 @@ async function runTextDetector() {
 
 
 // ============================================
-// 9. IMAGE DETECTOR RUNNER
+// 12. IMAGE DETECTOR RUNNER
 // ============================================
 
 async function runImageDetector() {
@@ -509,28 +840,49 @@ async function runImageDetector() {
 
 
 // ============================================
-// 10. MAIN DETECTOR (FUSION PIPELINE)
+// 13. COUNTDOWN DETECTOR RUNNER
+// ============================================
+
+async function runCountdownDetector() {
+    const candidates = findCandidateCountdowns();
+
+    if (candidates.length === 0) {
+        return;
+    }
+
+    console.log("Dark-Guard: Candidate countdown timers to observe:", candidates.length);
+
+    // Fire-and-forget: each candidate observes itself for ~8s in the
+    // background and reports in asynchronously, so this doesn't block
+    // the rest of the detection pipeline.
+    candidates.forEach(el => trackCountdownElement(el));
+}
+
+
+// ============================================
+// 14. MAIN DETECTOR (FUSION PIPELINE)
 // ============================================
 
 async function runDetector() {
-    console.log("Dark-Guard: Scanning webpage for text and images...");
+    console.log("Dark-Guard: Scanning webpage for text, images, and countdown timers...");
 
     await Promise.allSettled([
         runTextDetector(),
-        runImageDetector()
+        runImageDetector(),
+        runCountdownDetector()
     ]);
 }
 
 
 // ============================================
-// 11. INITIAL SCAN
+// 15. INITIAL SCAN
 // ============================================
 
 runDetector();
 
 
 // ============================================
-// 12. MUTATION OBSERVER
+// 16. MUTATION OBSERVER
 // ============================================
 
 const observer = new MutationObserver(mutations => {
@@ -543,7 +895,7 @@ const observer = new MutationObserver(mutations => {
         }
 
         const isInsideHighlight = mutation.target.parentElement?.closest(
-            ".dark-pattern-highlight, .dark-pattern-img-highlight, .dark-pattern-img-badge, .dark-pattern-bbox-overlay"
+            ".dark-pattern-highlight, .dark-pattern-img-highlight, .dark-pattern-img-badge, .dark-pattern-bbox-overlay, .dark-pattern-countdown-highlight, .dark-pattern-countdown-badge"
         );
 
         return !isInsideHighlight;

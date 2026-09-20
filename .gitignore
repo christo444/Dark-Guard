@@ -5,9 +5,11 @@ backend/model_weights/
 *.safetensors
 
 # Python standard ignores
-__pycache__/
-*.pyc
+backend/.venv/
+.venv/
 venv/
 env/
 .env
+__pycache__/
+*.pyc
 .pytest_cache/
