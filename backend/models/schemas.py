@@ -1,11 +1,16 @@
 from pydantic import BaseModel
 from typing import List, Optional
 
+class ContextualTextRequest(BaseModel):
+    candidate_text: str
+    context: str
+
 class PredictRequest(BaseModel):
-    texts: List[str]
+    texts: List[ContextualTextRequest]
 
 class PredictionResult(BaseModel):
-    text: str
+    candidate_text: str
+    context: str
     is_dark_pattern: bool
     category: str
     confidence: float

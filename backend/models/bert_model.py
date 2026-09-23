@@ -36,17 +36,24 @@ class BertModel:
         with torch.no_grad():
             outputs = self.model(**inputs)
             
-        # Convert logits to probabilities using softmax
-        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        # Calculate logit difference between Class 1 (Dark Pattern) and Class 0
+        logits = outputs.logits[0].tolist()
+        logit_diff = logits[1] - logits[0]
         
-        # Get the highest probability and its corresponding class index
-        confidence, predicted_class_tensor = torch.max(probs, dim=-1)
+        # Use native prediction without artificial thresholding to expose model behavior
+        is_dark_pattern = logits[1] > logits[0]
         
-        predicted_class_id = str(predicted_class_tensor.item())
+        if is_dark_pattern:
+            predicted_class_id = "1"
+            confidence = torch.nn.functional.sigmoid(torch.tensor(logit_diff)).item()
+        else:
+            predicted_class_id = "0"
+            confidence = 1.0 - torch.nn.functional.sigmoid(torch.tensor(logit_diff)).item()
+            
         category = self.label_map.get(predicted_class_id, "Unknown")
         
         return {
             "is_dark_pattern": category != "Not Dark Pattern",
             "category": category,
-            "confidence": float(confidence.item())
+            "confidence": float(confidence)
         }

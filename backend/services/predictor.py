@@ -4,7 +4,8 @@ from models.schemas import (
     PredictionResult,
     ImagePredictRequest,
     ImagePredictResponse,
-    OCRDetectionResult
+    OCRDetectionResult,
+    ContextualTextRequest
 )
 from models.bert_model import BertModel
 from models.dummy_model import DummyBertModel
@@ -15,30 +16,36 @@ class PredictorService:
         # Determine path to the extracted model weights
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         model_path = os.path.join(base_dir, "model_weights", "darkguard-bert-final")
-        
-        # Load BERT model if weights exist, otherwise fall back gracefully to DummyBertModel
         if os.path.exists(model_path):
-            try:
-                print(f"Loading BERT model from {model_path}...")
-                self.model = BertModel(model_path)
-            except Exception as e:
-                print(f"Failed to load BERT model from {model_path}: {e}. Falling back to DummyBertModel.")
-                self.model = DummyBertModel()
+            self.model = BertModel(model_path)
         else:
-            print(f"Notice: Model weights not found at {model_path}. Using DummyBertModel for testing.")
+            print("Warning: darkguard-bert-final weights not found. Using DummyBertModel.")
             self.model = DummyBertModel()
 
         # Initialize OCR Service
         self.ocr_service = OCRService()
 
-    def process_texts(self, texts: List[str]) -> List[PredictionResult]:
+    def process_texts(self, texts: List[ContextualTextRequest]) -> List[PredictionResult]:
         results = []
-        for text in texts:
-            cleaned_text = text.strip()
-            prediction = self.model.predict(cleaned_text)
+        
+        # Cache predictions by context to avoid redundant model runs for the same UI component
+        context_cache = {}
+
+        for req in texts:
+            # The context injection pipeline is flawed and causes collateral highlighting.
+            # Since the model is now retrained to accurately classify isolated strings, 
+            # we evaluate the candidate_text directly.
+            candidate_cleaned = req.candidate_text.strip()
+            
+            if candidate_cleaned not in context_cache:
+                prediction = self.model.predict(candidate_cleaned)
+                context_cache[candidate_cleaned] = prediction
+            else:
+                prediction = context_cache[candidate_cleaned]
             
             result = PredictionResult(
-                text=text,  # Keep the original text for highlighting on frontend
+                candidate_text=req.candidate_text,
+                context=req.context,
                 is_dark_pattern=prediction["is_dark_pattern"],
                 category=prediction["category"],
                 confidence=prediction["confidence"]

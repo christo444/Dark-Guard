@@ -51,60 +51,75 @@ function normalizeText(text) {
 // 1. EXTRACT TEXT FROM WEBPAGE
 // ============================================
 
-function extractTexts() {
-    const elements = document.querySelectorAll(
-        "p, span, div, button, a, h1, h2, h3, h4, h5, label"
-    );
+let textIntersectionObserver = null;
 
-    const texts = [];
-    const normalizedTexts = new Set();
+function initTextObserver() {
+    if (textIntersectionObserver) return;
+    
+    textIntersectionObserver = new IntersectionObserver((entries) => {
+        const visibleTexts = [];
+        
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const element = entry.target;
+                textIntersectionObserver.unobserve(element);
+                
+                const candidateText = element.innerText?.trim();
+                if (!candidateText || candidateText.length < 4 || candidateText.length > 500) return;
+                
+                const normalizedCandidateText = normalizeText(candidateText);
+                if (!normalizedCandidateText || analyzedTexts.has(normalizedCandidateText)) return;
+                
+                // Prefer the smallest candidate
+                const hasMeaningfulDescendant = [...element.querySelectorAll(
+                    "p, span, div, button, a, h1, h2, h3, h4, h5, label"
+                )].some(descendant => {
+                    const descendantText = descendant.innerText?.trim();
+                    const normalizedDescendantText = descendantText && normalizeText(descendantText);
+                    return normalizedDescendantText && (
+                        normalizedDescendantText === normalizedCandidateText ||
+                        normalizedCandidateText.includes(normalizedDescendantText)
+                    );
+                });
 
-    elements.forEach(element => {
-        const text = element.innerText?.trim();
+                if (hasMeaningfulDescendant) return;
 
-        // Ignore empty text
-        if (!text) {
-            return;
-        }
+                // Find meaningful context container
+                let container = element.parentElement;
+                while (container && container !== document.body) {
+                    const containerText = container.innerText?.trim();
+                    if (containerText && containerText.length > 20 && containerText.length <= 1000) {
+                        break;
+                    }
+                    if (containerText && containerText.length > 1000) {
+                        container = container.firstElementChild || container;
+                        break;
+                    }
+                    container = container.parentElement;
+                }
+                const contextText = (container ? container.innerText : candidateText).trim().substring(0, 1000).replace(/\s+/g, " ");
 
-        // Ignore very short text
-        if (text.length < 4) {
-            return;
-        }
-
-        // Ignore extremely large sections
-        if (text.length > 500) {
-            return;
-        }
-
-        const normalizedText = normalizeText(text);
-
-        if (!normalizedText || normalizedTexts.has(normalizedText)) {
-            return;
-        }
-
-        // Prefer the smallest candidate containing this visible message.
-        const hasMeaningfulDescendant = [...element.querySelectorAll(
-            "p, span, div, button, a, h1, h2, h3, h4, h5, label"
-        )].some(descendant => {
-            const descendantText = descendant.innerText?.trim();
-            const normalizedDescendantText = descendantText && normalizeText(descendantText);
-            return normalizedDescendantText && (
-                normalizedDescendantText === normalizedText ||
-                normalizedText.includes(normalizedDescendantText)
-            );
+                analyzedTexts.add(normalizedCandidateText);
+                visibleTexts.push({ candidate_text: candidateText, context: contextText });
+            }
         });
+        
+        if (visibleTexts.length > 0) {
+            // Deduplicate by candidate_text
+            const uniqueMap = new Map();
+            visibleTexts.forEach(item => {
+                if (!uniqueMap.has(item.candidate_text)) {
+                    uniqueMap.set(item.candidate_text, item);
+                }
+            });
+            const uniqueTexts = Array.from(uniqueMap.values());
 
-        if (hasMeaningfulDescendant) {
-            return;
+            console.log(`Dark-Guard: ${uniqueTexts.length} text snippet(s) became visible, scanning contextual blocks...`);
+            checkDarkPatterns(uniqueTexts).then(results => {
+                results.forEach(result => highlightDarkPattern(result));
+            });
         }
-
-        normalizedTexts.add(normalizedText);
-        texts.push(text);
-    });
-
-    // Remove duplicate text
-    return [...new Set(texts)];
+    }, { rootMargin: "300px" });
 }
 
 
@@ -113,29 +128,27 @@ function extractTexts() {
 // ============================================
 
 async function checkDarkPatterns(texts) {
-    try {
-        console.log("Dark-Guard: Sending texts to backend:", texts);
-
-        const response = await fetch(API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ texts: texts })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Backend returned HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        console.log("Dark-Guard: Text predictions response:", data);
-        return data.results || [];
-
-    } catch (error) {
-        console.error("Dark-Guard API Error (Text):", error);
-        return [];
-    }
+    return new Promise((resolve) => {
+        console.log("Dark-Guard: Sending texts to backend via background script:", texts);
+        chrome.runtime.sendMessage(
+            { action: "predictText", payload: { texts: texts } },
+            (response) => {
+                console.error("[DEBUG Text] response is:", response, "lastError is:", chrome.runtime.lastError);
+                if (chrome.runtime.lastError) {
+                    console.error("Dark-Guard API Error (Text) - lastError:", chrome.runtime.lastError.message);
+                    resolve([]);
+                    return;
+                }
+                if (response && response.success) {
+                    console.log("Dark-Guard: Text predictions response:", response.data);
+                    resolve(response.data.results || []);
+                } else {
+                    console.error("Dark-Guard API Error (Text):", response ? JSON.stringify(response) : "undefined");
+                    resolve([]);
+                }
+            }
+        );
+    });
 }
 
 
@@ -149,7 +162,7 @@ function highlightDarkPattern(result) {
         return;
     }
 
-    const targetText = result.text;
+    const targetText = result.candidate_text;
     const normalizedTargetText = normalizeText(targetText);
 
     if (highlightedTexts.has(normalizedTargetText)) {
@@ -265,49 +278,55 @@ function getImageDataOrUrl(imgElement) {
     return imgElement.currentSrc || imgElement.src;
 }
 
-function extractImages() {
-    const imgElements = document.querySelectorAll("img");
-    const candidates = [];
+let imageIntersectionObserver = null;
 
-    imgElements.forEach((img, idx) => {
-        // Skip hidden or unrendered images
-        const width = img.naturalWidth || img.width || img.clientWidth;
-        const height = img.naturalHeight || img.height || img.clientHeight;
+function initImageObserver() {
+    if (imageIntersectionObserver) return;
+    
+    imageIntersectionObserver = new IntersectionObserver((entries) => {
+        const visibleImages = [];
+        
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                imageIntersectionObserver.unobserve(img); // Only scan once!
+                
+                // Assign unique tracking ID if not present
+                if (!img.dataset.darkguardImgId) {
+                    img.dataset.darkguardImgId = `dg-img-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+                }
 
-        // Ignore tiny utility icons, tracking pixels, bullets (<40px)
-        if (width < 40 || height < 40) {
-            return;
-        }
+                const src = img.currentSrc || img.src;
+                if (!src || analyzedImages.has(src)) {
+                    return;
+                }
 
-        const src = img.currentSrc || img.src;
-        if (!src) {
-            return;
-        }
+                const imagePayload = getImageDataOrUrl(img);
+                if (!imagePayload) {
+                    return;
+                }
 
-        // Avoid re-scanning same image src
-        if (analyzedImages.has(src)) {
-            return;
-        }
-
-        // Assign unique tracking ID if not present
-        if (!img.dataset.darkguardImgId) {
-            img.dataset.darkguardImgId = `dg-img-${Date.now()}-${idx}`;
-        }
-
-        const imagePayload = getImageDataOrUrl(img);
-        if (!imagePayload) {
-            return;
-        }
-
-        analyzedImages.add(src);
-        candidates.push({
-            image_id: img.dataset.darkguardImgId,
-            image: imagePayload,
-            element: img
+                analyzedImages.add(src);
+                visibleImages.push({
+                    image_id: img.dataset.darkguardImgId,
+                    image: imagePayload,
+                    element: img
+                });
+            }
         });
-    });
-
-    return candidates;
+        
+        if (visibleImages.length > 0) {
+            console.log(`Dark-Guard: ${visibleImages.length} image(s) became visible, scanning now...`);
+            checkImageDarkPatterns(visibleImages).then(imageResults => {
+                imageResults.forEach(imgResult => {
+                    if (imgResult.has_dark_pattern) {
+                        console.log("⚠️ DARK PATTERN (IMAGE):", imgResult);
+                        highlightImageDarkPattern(imgResult);
+                    }
+                });
+            });
+        }
+    }, { rootMargin: "300px" }); // Start scanning slightly before they appear on screen
 }
 
 
@@ -325,51 +344,27 @@ async function checkImageDarkPatterns(images) {
         image: item.image
     }));
 
-    try {
-        console.log(`Dark-Guard: Sending ${payload.length} image(s) to backend...`);
-
-        // Try batch endpoint first
-        const batchResponse = await fetch(BATCH_IMAGE_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ images: payload })
-        });
-
-        if (batchResponse.ok) {
-            const data = await batchResponse.json();
-            console.log("Dark-Guard: Batch image response:", data);
-            return data.results || [];
-        }
-
-        console.warn(`Dark-Guard: Batch endpoint returned ${batchResponse.status}, falling back to single endpoint...`);
-    } catch (err) {
-        console.warn("Dark-Guard: Batch image request failed, trying single endpoint fallback...", err);
-    }
-
-    // Fallback: send one by one to /predict-image (Option B from gloria.md)
-    const results = [];
-    for (const item of payload) {
-        try {
-            const response = await fetch(IMAGE_API_URL, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(item)
-            });
-
-            if (response.ok) {
-                const resData = await response.json();
-                results.push(resData);
+    return new Promise((resolve) => {
+        console.log(`Dark-Guard: Sending ${payload.length} image(s) to backend via background script...`);
+        chrome.runtime.sendMessage(
+            { action: "predictBatchImage", payload: { images: payload } },
+            (response) => {
+                console.error("[DEBUG Image] response is:", response, "lastError is:", chrome.runtime.lastError);
+                if (chrome.runtime.lastError) {
+                    console.error("Dark-Guard API Error (Image) - lastError:", chrome.runtime.lastError.message);
+                    resolve([]);
+                    return;
+                }
+                if (response && response.success) {
+                    console.log("Dark-Guard: Batch image response:", response.data);
+                    resolve(response.data.results || []);
+                } else {
+                    console.error("Dark-Guard API Error (Image):", response ? JSON.stringify(response) : "undefined");
+                    resolve([]);
+                }
             }
-        } catch (singleErr) {
-            console.error(`Dark-Guard: Error predicting image ${item.image_id}:`, singleErr);
-        }
-    }
-
-    return results;
+        );
+    });
 }
 
 
@@ -709,36 +704,37 @@ async function analyzeCountdown(el, startSeconds, startTime, readings) {
 }
 
 async function verifyCountdown(el, persistentSelector, evidence) {
-    try {
-        console.log("Dark-Guard: Sending countdown evidence to backend:", evidence);
+    return new Promise((resolve) => {
+        console.log("Dark-Guard: Sending countdown evidence to backend via background script:", evidence);
+        const payload = {
+            page_url: location.href,
+            element_selector: persistentSelector,
+            evidence,
+            element_text_sample: (el.innerText || "").trim().slice(0, 60)
+        };
+        chrome.runtime.sendMessage(
+            { action: "verifyCountdown", payload: payload },
+            (response) => {
+                if (chrome.runtime.lastError) {
+                    console.error("Dark-Guard API Error (Countdown) - lastError:", chrome.runtime.lastError.message);
+                    resolve();
+                    return;
+                }
+                if (response && response.success) {
+                    const result = response.data;
+                    console.log("Dark-Guard: Countdown verification response:", result);
 
-        const response = await fetch(COUNTDOWN_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                page_url: location.href,
-                element_selector: persistentSelector,
-                evidence,
-                element_text_sample: (el.innerText || "").trim().slice(0, 60)
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Backend returned HTTP ${response.status}`);
-        }
-
-        const result = await response.json();
-        console.log("Dark-Guard: Countdown verification response:", result);
-
-        if (result.is_dark_pattern) {
-            console.log("⚠️ DARK PATTERN (COUNTDOWN):", result);
-            highlightCountdownDarkPattern(el, persistentSelector, result);
-        }
-    } catch (error) {
-        console.error("Dark-Guard API Error (Countdown):", error);
-    }
+                    if (result.is_dark_pattern) {
+                        console.log("⚠️ DARK PATTERN (COUNTDOWN):", result);
+                        highlightCountdownDarkPattern(el, persistentSelector, result);
+                    }
+                } else {
+                    console.error("Dark-Guard API Error (Countdown):", response?.error);
+                }
+                resolve();
+            }
+        );
+    });
 }
 
 
@@ -793,25 +789,24 @@ function highlightCountdownDarkPattern(el, persistentSelector, result) {
 // ============================================
 
 async function runTextDetector() {
-    const allTexts = extractTexts();
-    const newTexts = allTexts.filter(text => !analyzedTexts.has(normalizeText(text)));
+    initTextObserver();
 
-    if (newTexts.length === 0) {
-        return;
-    }
+    const elements = document.querySelectorAll(
+        "p, span, div, button, a, h1, h2, h3, h4, h5, label"
+    );
+    let queuedCount = 0;
 
-    console.log("Dark-Guard: New texts to analyze:", newTexts.length);
-
-    newTexts.forEach(text => analyzedTexts.add(normalizeText(text)));
-
-    const results = await checkDarkPatterns(newTexts);
-
-    results.forEach(result => {
-        if (result.is_dark_pattern) {
-            console.log("⚠️ DARK PATTERN (TEXT):", result);
-            highlightDarkPattern(result);
+    elements.forEach(el => {
+        if (!el.dataset.darkguardTextObserved) {
+            el.dataset.darkguardTextObserved = "true";
+            textIntersectionObserver.observe(el);
+            queuedCount++;
         }
     });
+
+    if (queuedCount > 0) {
+        console.log(`Dark-Guard: Queued ${queuedCount} text element(s) for lazy scanning...`);
+    }
 }
 
 
@@ -820,22 +815,30 @@ async function runTextDetector() {
 // ============================================
 
 async function runImageDetector() {
-    const candidateImages = extractImages();
+    initImageObserver();
 
-    if (candidateImages.length === 0) {
-        return;
-    }
+    const imgElements = document.querySelectorAll("img");
+    let queuedCount = 0;
+    
+    imgElements.forEach((img) => {
+        const width = img.naturalWidth || img.width || img.clientWidth;
+        const height = img.naturalHeight || img.height || img.clientHeight;
 
-    console.log("Dark-Guard: Candidate images to analyze:", candidateImages.length);
+        // Ignore tiny utility icons, tracking pixels, bullets (<40px)
+        if (width > 0 && height > 0 && (width < 40 || height < 40)) {
+            return;
+        }
 
-    const imageResults = await checkImageDarkPatterns(candidateImages);
-
-    imageResults.forEach(imgResult => {
-        if (imgResult.has_dark_pattern) {
-            console.log("⚠️ DARK PATTERN (IMAGE):", imgResult);
-            highlightImageDarkPattern(imgResult);
+        if (!img.dataset.darkguardObserved) {
+            img.dataset.darkguardObserved = "true";
+            imageIntersectionObserver.observe(img);
+            queuedCount++;
         }
     });
+    
+    if (queuedCount > 0) {
+        console.log(`Dark-Guard: Queued ${queuedCount} image(s) for lazy scanning...`);
+    }
 }
 
 
@@ -864,11 +867,11 @@ async function runCountdownDetector() {
 // ============================================
 
 async function runDetector() {
-    console.log("Dark-Guard: Scanning webpage for text, images, and countdown timers...");
+    console.log("Dark-Guard: Scanning webpage for text and countdown timers (Image scanning temporarily disabled)...");
 
     await Promise.allSettled([
         runTextDetector(),
-        runImageDetector(),
+        // runImageDetector(), // Temporarily disabled as requested
         runCountdownDetector()
     ]);
 }
