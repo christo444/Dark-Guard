@@ -42,6 +42,53 @@ const pageDetections = {
     countdowns: []
 };
 
+let dbSyncTimeout = null;
+
+function syncDetectionsToDatabase() {
+    clearTimeout(dbSyncTimeout);
+    dbSyncTimeout = setTimeout(() => {
+        const total = pageDetections.texts.length + pageDetections.images.length + pageDetections.countdowns.length;
+        if (total === 0) return;
+
+        const allDetections = [
+            ...pageDetections.texts.map(t => ({
+                candidate_text: t.text,
+                category: t.category,
+                confidence: t.confidence,
+                source_type: "text",
+                context: t.context || t.text
+            })),
+            ...pageDetections.images.map(i => ({
+                candidate_text: i.text,
+                category: i.category,
+                confidence: i.confidence,
+                source_type: "image",
+                context: `Image ID: ${i.image_id}`
+            })),
+            ...pageDetections.countdowns.map(c => ({
+                candidate_text: c.text || c.selector,
+                category: c.category || "FAKE_COUNTDOWN",
+                confidence: c.confidence,
+                source_type: "countdown",
+                context: `Selector: ${c.selector}`
+            }))
+        ];
+
+        try {
+            chrome.runtime.sendMessage({
+                action: "logToDatabase",
+                payload: {
+                    page_url: location.href,
+                    domain: location.hostname,
+                    detections: allDetections
+                }
+            }, () => {
+                if (chrome.runtime.lastError) {}
+            });
+        } catch (e) {}
+    }, 1500);
+}
+
 function notifyBadgeUpdate() {
     const total = pageDetections.texts.length + pageDetections.images.length + pageDetections.countdowns.length;
     try {
@@ -53,6 +100,7 @@ function notifyBadgeUpdate() {
             });
         }
     } catch (e) {}
+    syncDetectionsToDatabase();
 }
 
 // Used for MutationObserver debounce

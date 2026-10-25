@@ -28,18 +28,17 @@
             </div>
         </header>
 
-        <!-- Trust Score Hero Card -->
-        <section class="score-card" id="scoreCard">
-            <div class="score-left">
-                <div class="score-dial">
-                    <span class="score-number" id="safetyScore">--</span>
-                    <span class="score-max">/100</span>
-                </div>
-                <div class="grade-pill" id="letterGrade">--</div>
+        <!-- Detection Status Card -->
+        <section class="status-card" id="statusCard">
+            <div class="status-icon-wrapper" id="statusIconWrapper">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="M9 12l2 2 4-4"/>
+                </svg>
             </div>
-            <div class="score-right">
-                <div class="risk-badge" id="riskBadge">ANALYZING PAGE</div>
-                <p class="summary-text" id="summaryMessage">Scanning page text, image banners, and countdown timers...</p>
+            <div class="status-content">
+                <div class="status-badge" id="statusBadge">MONITORING ACTIVE</div>
+                <p class="status-message" id="statusMessage">Analyzing page text, image banners, and countdown timers...</p>
             </div>
         </section>
 

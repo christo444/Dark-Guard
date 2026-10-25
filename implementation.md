@@ -381,6 +381,37 @@ Dark-Guard/
 | `/predict-images` | `POST` | `{"images": [...]}` | `OCRService` + `PredictorService` | Batch version of the image prediction endpoint. |
 | `/verify-countdown`| `POST`| `{"page_url": "...", "element_selector": "...", "evidence": {...}}` | `CountdownVerifierService` | Computes fakeness score for dynamic countdown timers. |
 | `/verify-countdowns`| `POST`| `{"countdowns": [...]}` | `CountdownVerifierService` | Batch countdown verification endpoint. |
+| `/database/log` | `POST` | `{"page_url": "...", "detections": [...]}` | `DatabaseService` | Explicit logging endpoint for extension and batch sync. |
+| `/database/detections` | `GET` | Query params: `review_status`, `category`, `domain`, `limit` | `DatabaseService` | Queries logged patterns with filtering. |
+| `/database/detections/{id}/review` | `POST` | `{"review_status": "false_positive", "corrected_label": "..."}` | `DatabaseService` | Marks false positives and records human ground-truth corrections. |
+| `/database/stats` | `GET` | None | `DatabaseService` | Overview metrics and false positive rates. |
+| `/database/export-dataset` | `GET` | Query param: `status_filter` | `DatabaseService` | Generates clean training dataset JSON for BERT fine-tuning. |
+
+---
+
+## Phase 10: Centralized SQLite Database & Model Retraining Pipeline
+
+### 1. Architectural Motivation
+Prior to Phase 10, Dark-Guard operated statelessly in memory. To enable continuous model improvement and systematically discover false positives across live web browsing, a persistent SQLite database (`darkguard.db`) was implemented.
+
+### 2. Schema Specification
+The `detections` table stores complete contextual evidence for every pattern identified:
+- `id`: Unique primary key.
+- `timestamp`: UTC ISO timestamp.
+- `page_url` & `domain`: Source origin tracking.
+- `source_type`: Origin tag (`text`, `image`, `countdown`).
+- `candidate_text`: The extracted phrase or banner text.
+- `context`: Surrounding contextual DOM block (crucial for BERT attention mechanisms).
+- `category` & `confidence`: Model prediction and probability.
+- `model_version`: Tagged checkpoint (default `darkguard-bert-final`).
+- `review_status`: Curation state (`unreviewed`, `confirmed`, `false_positive`).
+- `corrected_label`: Human-assigned ground-truth label (e.g. `Not Dark Pattern`).
+- `reviewer_notes`: Reviewer explanation.
+
+### 3. Pipeline Integration
+- **Zero-Friction Auto-Logging:** When `/predict`, `/predict-images`, or `/verify-countdown` encounter a positive dark pattern, it is automatically recorded into the database.
+- **Client Debounced Sync:** `content.js` buffers all page detections and syncs them to `POST /database/log` with page URL and domain after 1.5 seconds of user activity.
+- **Curated Dataset Export:** The `GET /database/export-dataset` endpoint exports all flagged and confirmed samples into a format directly consumable by the PyTorch/HuggingFace training pipeline, automatically transforming false positives into negative training samples (`label: "Not Dark Pattern", is_dark_pattern: false`).
 
 ---
 

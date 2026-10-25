@@ -81,25 +81,48 @@ class BatchCountdownVerifyResponse(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Website Trust & Safety Scoring
+# Database & Model Retraining Logging Schemas
 # ------------------------------------------------------------------
 
-class DetectedPatternItem(BaseModel):
+class LogDetectionItem(BaseModel):
+    page_url: Optional[str] = None
+    domain: Optional[str] = None
+    source_type: str = "text"  # "text", "image", "countdown"
+    candidate_text: str
+    context: Optional[str] = None
     category: str
-    text_or_target: str
     confidence: float
-    source: str = "text"  # "text", "image", "countdown"
+    model_version: str = "darkguard-bert-final"
 
-class SiteEvaluationRequest(BaseModel):
+class LogDetectionsRequest(BaseModel):
     page_url: str
-    patterns: List[DetectedPatternItem]
+    domain: Optional[str] = None
+    detections: List[LogDetectionItem]
 
-class SiteEvaluationResponse(BaseModel):
-    page_url: str
-    safety_score: int              # 0 to 100
-    letter_grade: str              # "A", "B", "C", "D", "F"
-    risk_level: str                # "Safe", "Low Risk", "Moderate Risk", "High Risk", "Critical"
-    total_dark_patterns: int
-    category_breakdown: dict
-    severity_breakdown: dict
-    summary_message: str
+class ReviewDetectionRequest(BaseModel):
+    review_status: str  # "false_positive", "confirmed", "unreviewed"
+    corrected_label: Optional[str] = None  # e.g. "Not Dark Pattern" or corrected category
+    reviewer_notes: Optional[str] = None
+
+class DetectionRecord(BaseModel):
+    id: int
+    timestamp: str
+    page_url: Optional[str] = None
+    domain: Optional[str] = None
+    source_type: str
+    candidate_text: str
+    context: Optional[str] = None
+    category: str
+    confidence: float
+    model_version: str
+    review_status: str
+    corrected_label: Optional[str] = None
+    reviewer_notes: Optional[str] = None
+
+class DatabaseStatsResponse(BaseModel):
+    total_detections: int
+    unreviewed_count: int
+    confirmed_count: int
+    false_positive_count: int
+    category_counts: dict
+    source_counts: dict

@@ -2,21 +2,9 @@
 // DARK-GUARD POPUP CONTROLLER
 // ============================================
 
-const SEVERITY_CONFIG = {
-    "Sneaking": { penalty: 25, severity: "high" },
-    "Obstruction": { penalty: 25, severity: "high" },
-    "FAKE_COUNTDOWN": { penalty: 25, severity: "high" },
-    "Fake Countdown Timer": { penalty: 25, severity: "high" },
-    "Forced Action": { penalty: 18, severity: "medium" },
-    "Misdirection": { penalty: 15, severity: "medium" },
-    "Scarcity": { penalty: 10, severity: "low" },
-    "Urgency": { penalty: 10, severity: "low" },
-    "Social Proof": { penalty: 10, severity: "low" }
-};
-
 let currentTabId = null;
 let currentSummaryData = null;
-let currentEvaluation = null;
+let currentPatterns = [];
 let isHighlightsHidden = false;
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -96,119 +84,39 @@ function processDetections(summary) {
     document.getElementById("countImages").textContent = imageItems.length;
     document.getElementById("countTimers").textContent = timerItems.length;
 
-    // Format all patterns for evaluation
+    // Format all patterns
     const patternPayload = [
         ...textItems.map(t => ({ category: t.category, text_or_target: t.text, confidence: t.confidence, source: "text" })),
         ...imageItems.map(i => ({ category: i.category, text_or_target: i.text, confidence: i.confidence, source: "image" })),
         ...timerItems.map(c => ({ category: c.category, text_or_target: c.text, confidence: c.confidence, source: "countdown" }))
     ];
+    currentPatterns = patternPayload;
 
-    // Request evaluateSite from backend via background service worker
-    chrome.runtime.sendMessage(
-        {
-            action: "evaluateSite",
-            payload: {
-                page_url: summary.url,
-                patterns: patternPayload
-            }
-        },
-        (res) => {
-            if (res && res.success && res.data) {
-                currentEvaluation = res.data;
-                renderEvaluation(res.data, patternPayload);
-            } else {
-                // Offline fallback using identical client formula
-                console.log("Dark-Guard: Using client fallback evaluation calculation");
-                const fallbackEval = computeLocalEvaluation(summary.url, patternPayload);
-                currentEvaluation = fallbackEval;
-                renderEvaluation(fallbackEval, patternPayload);
-            }
-        }
-    );
-}
+    // Update Status Card
+    const statusCard = document.getElementById("statusCard");
+    const statusBadge = document.getElementById("statusBadge");
+    const statusMessage = document.getElementById("statusMessage");
 
-function computeLocalEvaluation(url, patterns) {
-    let totalDeductions = 0;
-    const categoryBreakdown = {};
-    const severityBreakdown = { High: 0, Medium: 0, Low: 0 };
-
-    patterns.forEach(item => {
-        const cat = item.category;
-        if (!cat || cat === "Not Dark Pattern") return;
-
-        categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
-        const cfg = SEVERITY_CONFIG[cat] || { penalty: 12, severity: "medium" };
-        totalDeductions += cfg.penalty;
-
-        const sevKey = cfg.severity.charAt(0).toUpperCase() + cfg.severity.slice(1);
-        severityBreakdown[sevKey] = (severityBreakdown[sevKey] || 0) + 1;
-    });
-
-    const safetyScore = Math.max(0, Math.min(100, 100 - totalDeductions));
-    const totalDp = Object.values(categoryBreakdown).reduce((a, b) => a + b, 0);
-
-    let letterGrade = "A";
-    let riskLevel = "Safe";
-    let summaryMessage = "Clean website. No significant deceptive design tactics found.";
-
-    if (safetyScore >= 90) {
-        letterGrade = "A";
-        riskLevel = "Safe";
-        summaryMessage = "Clean website. No significant deceptive design tactics found.";
-    } else if (safetyScore >= 75) {
-        letterGrade = "B";
-        riskLevel = "Low Risk";
-        summaryMessage = "Mostly safe. Minor marketing pressure tactics detected.";
-    } else if (safetyScore >= 50) {
-        letterGrade = "C";
-        riskLevel = "Moderate Risk";
-        summaryMessage = "Exercise caution. Multiple manipulative patterns detected.";
-    } else if (safetyScore >= 30) {
-        letterGrade = "D";
-        riskLevel = "High Risk";
-        summaryMessage = "High risk of deception. Sneaky charges or forced actions likely.";
+    if (totalCount > 0) {
+        statusCard.classList.add("has-detections");
+        statusBadge.textContent = "THREATS DETECTED";
+        statusMessage.textContent = `${totalCount} deceptive dark pattern(s) identified on this page.`;
     } else {
-        letterGrade = "F";
-        riskLevel = "Critical";
-        summaryMessage = "Severe deceptive design. Aggressive manipulation detected across UI.";
+        statusCard.classList.remove("has-detections");
+        statusBadge.textContent = "PAGE CLEAN";
+        statusMessage.textContent = "No deceptive marketing or dark patterns found on this page.";
     }
 
-    return {
-        page_url: url,
-        safety_score: safetyScore,
-        letter_grade: letterGrade,
-        risk_level: riskLevel,
-        total_dark_patterns: totalDp,
-        category_breakdown: categoryBreakdown,
-        severity_breakdown: severityBreakdown,
-        summary_message: summaryMessage
-    };
-}
+    // Build Category Breakdown
+    const categoryBreakdown = {};
+    patternPayload.forEach(item => {
+        const cat = item.category;
+        if (!cat || cat === "Not Dark Pattern") return;
+        categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
+    });
 
-function renderEvaluation(data, patterns) {
-    const scoreCard = document.getElementById("scoreCard");
-    const scoreNumber = document.getElementById("safetyScore");
-    const letterGrade = document.getElementById("letterGrade");
-    const riskBadge = document.getElementById("riskBadge");
-    const summaryMsg = document.getElementById("summaryMessage");
-
-    // Animate score number
-    animateValue(scoreNumber, 0, data.safety_score, 500);
-
-    letterGrade.textContent = data.letter_grade;
-    riskBadge.textContent = data.risk_level.toUpperCase();
-    summaryMsg.textContent = data.summary_message;
-
-    // Set risk color theme
-    scoreCard.className = "score-card";
-    const riskKey = data.risk_level.toLowerCase().replace(/\s+/g, "-");
-    scoreCard.classList.add(`risk-${riskKey}`);
-
-    // Render Category Breakdown
-    renderCategoryPills(data.category_breakdown);
-
-    // Render Detections Feed
-    renderDetectionsFeed(patterns);
+    renderCategoryPills(categoryBreakdown);
+    renderDetectionsFeed(patternPayload);
 }
 
 function renderCategoryPills(breakdown) {
@@ -226,9 +134,8 @@ function renderCategoryPills(breakdown) {
 
     categories.forEach(cat => {
         const count = breakdown[cat];
-        const cfg = SEVERITY_CONFIG[cat] || { severity: "medium" };
         const pill = document.createElement("div");
-        pill.className = `category-pill cat-${cfg.severity}`;
+        pill.className = `category-pill cat-default`;
         pill.innerHTML = `<span>${cat}</span><span class="pill-count">${count}</span>`;
         container.appendChild(pill);
     });
@@ -255,7 +162,6 @@ function renderDetectionsFeed(patterns) {
     }
 
     patterns.forEach(item => {
-        const cfg = SEVERITY_CONFIG[item.category] || { severity: "medium" };
         const confPct = Math.round((item.confidence || 0.95) * 100);
 
         const card = document.createElement("div");
@@ -265,7 +171,7 @@ function renderDetectionsFeed(patterns) {
 
         card.innerHTML = `
             <div class="item-header">
-                <span class="item-category ${cfg.severity}">${item.category}</span>
+                <span class="item-category">${item.category}</span>
                 <span class="item-meta">${sourceIcon} • ${confPct}% Conf</span>
             </div>
             <div class="item-text" title="${escapeHtml(item.text_or_target)}">
@@ -311,11 +217,10 @@ function setupButtons() {
 
     // Copy Audit Report
     btnCopy.addEventListener("click", () => {
-        if (!currentEvaluation) return;
+        if (!currentSummaryData) return;
 
-        const auditMd = generateAuditMarkdown(currentEvaluation);
+        const auditMd = generateAuditMarkdown(currentSummaryData, currentPatterns);
         navigator.clipboard.writeText(auditMd).then(() => {
-            const originalTitle = btnCopy.title;
             btnCopy.style.borderColor = "#10b981";
             btnCopy.style.color = "#10b981";
             setTimeout(() => {
@@ -326,52 +231,59 @@ function setupButtons() {
     });
 }
 
-function generateAuditMarkdown(evalData) {
-    const breakdown = Object.entries(evalData.category_breakdown || {})
+function generateAuditMarkdown(summary, patterns) {
+    const breakdown = {};
+    patterns.forEach(p => {
+        breakdown[p.category] = (breakdown[p.category] || 0) + 1;
+    });
+
+    const breakdownText = Object.entries(breakdown)
         .map(([k, v]) => `* **${k}:** ${v}`)
         .join("\n") || "None";
 
+    const itemsText = patterns.map((p, idx) => {
+        return `${idx + 1}. [${p.source.toUpperCase()}] **${p.category}** (${Math.round((p.confidence || 0.95) * 100)}%): "${p.text_or_target}"`;
+    }).join("\n") || "No dark patterns detected.";
+
     return `# Dark-Guard Audit Report
-* **Target URL:** ${evalData.page_url}
-* **Safety Score:** ${evalData.safety_score} / 100 (Grade ${evalData.letter_grade})
-* **Risk Level:** ${evalData.risk_level}
-* **Total Dark Patterns Detected:** ${evalData.total_dark_patterns}
-* **Summary:** ${evalData.summary_message}
+* **Target URL:** ${summary.url}
+* **Domain:** ${summary.hostname || "Active Page"}
+* **Total Dark Patterns Detected:** ${patterns.length}
 
 ### Category Breakdown
-${breakdown}
+${breakdownText}
+
+### Detailed Detections
+${itemsText}
 
 *Generated by Dark-Guard Chrome Extension*`;
 }
 
-function animateValue(obj, start, end, duration) {
-    if (isNaN(end)) {
-        obj.textContent = "--";
-        return;
-    }
-    let startTimestamp = null;
-    const step = (timestamp) => {
-        if (!startTimestamp) startTimestamp = timestamp;
-        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-        obj.textContent = Math.floor(progress * (end - start) + start);
-        if (progress < 1) {
-            window.requestAnimationFrame(step);
-        }
-    };
-    window.requestAnimationFrame(step);
-}
-
 function renderEmptyState(message) {
-    document.getElementById("safetyScore").textContent = "100";
-    document.getElementById("letterGrade").textContent = "A";
-    document.getElementById("riskBadge").textContent = "CLEAN / IDLE";
-    document.getElementById("summaryMessage").textContent = message;
-    document.getElementById("countTotal").textContent = "0";
-    document.getElementById("categoryPills").innerHTML = `<div class="empty-hint">${message}</div>`;
+    const statusCard = document.getElementById("statusCard");
+    const statusBadge = document.getElementById("statusBadge");
+    const statusMessage = document.getElementById("statusMessage");
+
+    if (statusCard) statusCard.classList.remove("has-detections");
+    if (statusBadge) statusBadge.textContent = "IDLE";
+    if (statusMessage) statusMessage.textContent = message;
+
+    const countTotal = document.getElementById("countTotal");
+    const countText = document.getElementById("countText");
+    const countImages = document.getElementById("countImages");
+    const countTimers = document.getElementById("countTimers");
+    const categoryPills = document.getElementById("categoryPills");
+
+    if (countTotal) countTotal.textContent = "0";
+    if (countText) countText.textContent = "0";
+    if (countImages) countImages.textContent = "0";
+    if (countTimers) countTimers.textContent = "0";
+    if (categoryPills) categoryPills.innerHTML = `<div class="empty-hint">${message}</div>`;
 }
 
 function showError(msg) {
-    document.getElementById("summaryMessage").textContent = msg;
+    const statusMessage = document.getElementById("statusMessage");
+    if (statusMessage) statusMessage.textContent = msg;
 }
 
 function escapeHtml(str) {

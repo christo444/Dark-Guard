@@ -95,21 +95,21 @@ body {
     white-space: nowrap;
 }
 
-/* Trust Score Card */
-.score-card {
+/* Detection Status Card */
+.status-card {
     background: linear-gradient(145deg, #1e293b, #0f172a);
     border: 1px solid #334155;
     border-radius: 12px;
-    padding: 12px;
+    padding: 14px 16px;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     position: relative;
     overflow: hidden;
 }
 
-.score-card::before {
+.status-card::before {
     content: "";
     position: absolute;
     top: 0;
@@ -120,64 +120,55 @@ body {
     transition: background 0.3s ease;
 }
 
-.score-card.risk-safe::before { background: #10b981; }
-.score-card.risk-low::before { background: #38bdf8; }
-.score-card.risk-moderate::before { background: #f59e0b; }
-.score-card.risk-high::before { background: #f97316; }
-.score-card.risk-critical::before { background: #ef4444; }
-
-.score-left {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
+.status-card.has-detections::before {
+    background: #ef4444;
 }
 
-.score-dial {
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
-    border: 3px solid #334155;
+.status-icon-wrapper {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: #0f172a;
+    border: 1px solid #334155;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: #0f172a;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-    transition: border-color 0.3s ease;
+    color: #10b981;
+    flex-shrink: 0;
 }
 
-.score-card.risk-safe .score-dial { border-color: #10b981; }
-.score-card.risk-low .score-dial { border-color: #38bdf8; }
-.score-card.risk-moderate .score-dial { border-color: #f59e0b; }
-.score-card.risk-high .score-dial { border-color: #f97316; }
-.score-card.risk-critical .score-dial { border-color: #ef4444; }
+.status-card.has-detections .status-icon-wrapper {
+    color: #ef4444;
+    border-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
 
-.score-number {
-    font-size: 20px;
+.status-content {
+    flex: 1;
+}
+
+.status-badge {
+    display: inline-block;
+    font-size: 10px;
     font-weight: 800;
-    color: #ffffff;
-    line-height: 1;
+    letter-spacing: 0.5px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    margin-bottom: 4px;
 }
 
-.score-max {
-    font-size: 9px;
-    color: #64748b;
+.status-card.has-detections .status-badge {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
 }
 
-.grade-pill {
+.status-message {
     font-size: 11px;
-    font-weight: 800;
-    padding: 1px 7px;
-    border-radius: 10px;
-    background: #334155;
-    color: #f1f5f9;
+    color: #94a3b8;
+    line-height: 1.4;
 }
-
-.score-card.risk-safe .grade-pill { background: #10b981; color: #022c22; }
-.score-card.risk-low .grade-pill { background: #38bdf8; color: #082f49; }
-.score-card.risk-moderate .grade-pill { background: #f59e0b; color: #451a03; }
-.score-card.risk-high .grade-pill { background: #f97316; color: #431407; }
 .score-card.risk-critical .grade-pill { background: #ef4444; color: #450a0a; }
 
 .score-right {

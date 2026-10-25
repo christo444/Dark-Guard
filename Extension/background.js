@@ -8,7 +8,7 @@ const API_URL = "http://localhost:8000/predict";
 const IMAGE_API_URL = "http://localhost:8000/predict-image";
 const BATCH_IMAGE_API_URL = "http://localhost:8000/predict-images";
 const COUNTDOWN_API_URL = "http://localhost:8000/verify-countdown";
-const EVALUATE_API_URL = "http://localhost:8000/evaluate-site";
+const DB_LOG_URL = "http://localhost:8000/database/log";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     try {
@@ -34,8 +34,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             url = BATCH_IMAGE_API_URL;
         } else if (request.action === "verifyCountdown") {
             url = COUNTDOWN_API_URL;
-        } else if (request.action === "evaluateSite") {
-            url = EVALUATE_API_URL;
+        } else if (request.action === "logToDatabase") {
+            url = DB_LOG_URL;
         } else {
             console.warn("Unknown action:", request.action);
             sendResponse({ success: false, error: "Unknown action" });
