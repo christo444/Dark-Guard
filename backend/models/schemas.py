@@ -78,3 +78,28 @@ class BatchCountdownVerifyRequest(BaseModel):
 
 class BatchCountdownVerifyResponse(BaseModel):
     results: List[CountdownVerifyResponse]
+
+
+# ------------------------------------------------------------------
+# Website Trust & Safety Scoring
+# ------------------------------------------------------------------
+
+class DetectedPatternItem(BaseModel):
+    category: str
+    text_or_target: str
+    confidence: float
+    source: str = "text"  # "text", "image", "countdown"
+
+class SiteEvaluationRequest(BaseModel):
+    page_url: str
+    patterns: List[DetectedPatternItem]
+
+class SiteEvaluationResponse(BaseModel):
+    page_url: str
+    safety_score: int              # 0 to 100
+    letter_grade: str              # "A", "B", "C", "D", "F"
+    risk_level: str                # "Safe", "Low Risk", "Moderate Risk", "High Risk", "Critical"
+    total_dark_patterns: int
+    category_breakdown: dict
+    severity_breakdown: dict
+    summary_message: str

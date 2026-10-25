@@ -5,11 +5,25 @@ from models.schemas import (
     ImagePredictRequest,
     ImagePredictResponse,
     OCRDetectionResult,
-    ContextualTextRequest
+    ContextualTextRequest,
+    SiteEvaluationRequest,
+    SiteEvaluationResponse
 )
 from models.bert_model import BertModel
 from models.dummy_model import DummyBertModel
 from services.ocr_service import OCRService
+
+SEVERITY_CONFIG = {
+    "Sneaking": {"penalty": 25, "severity": "High"},
+    "Obstruction": {"penalty": 25, "severity": "High"},
+    "FAKE_COUNTDOWN": {"penalty": 25, "severity": "High"},
+    "Fake Countdown Timer": {"penalty": 25, "severity": "High"},
+    "Forced Action": {"penalty": 18, "severity": "Medium"},
+    "Misdirection": {"penalty": 15, "severity": "Medium"},
+    "Scarcity": {"penalty": 10, "severity": "Low"},
+    "Urgency": {"penalty": 10, "severity": "Low"},
+    "Social Proof": {"penalty": 10, "severity": "Low"},
+}
 
 class PredictorService:
     def __init__(self):
@@ -32,13 +46,27 @@ class PredictorService:
         context_cache = {}
 
         for req in texts:
-            # The context injection pipeline is flawed and causes collateral highlighting.
-            # Since the model is now retrained to accurately classify isolated strings, 
-            # we evaluate the candidate_text directly.
+            
             candidate_cleaned = req.candidate_text.strip()
             
             if candidate_cleaned not in context_cache:
                 prediction = self.model.predict(candidate_cleaned)
+                
+                # Rule-based overrides for remaining false positives (benign text)
+                lower_text = candidate_cleaned.lower()
+                benign_phrases = [
+                    "in stock and ready to ship", "in stock. ready for",
+                    "rooms available", "no hidden fees",
+                    "manufacturer warranty included"
+                ]
+                
+                # Check for isolated numbers (e.g., "3,417" or "12")
+                is_just_number = candidate_cleaned.replace(",", "").replace(".", "").isdigit()
+                
+                if is_just_number or any(phrase in lower_text for phrase in benign_phrases):
+                    prediction["is_dark_pattern"] = False
+                    prediction["category"] = "Not Dark Pattern"
+                    
                 context_cache[candidate_cleaned] = prediction
             else:
                 prediction = context_cache[candidate_cleaned]
@@ -100,3 +128,59 @@ class PredictorService:
             res = self.process_image(req.image, req.image_id)
             results.append(res)
         return results
+
+    def evaluate_site(self, request: SiteEvaluationRequest) -> SiteEvaluationResponse:
+        """
+        Computes a weighted Website Trust & Safety Score (0-100) based on
+        detected dark patterns, category severity, and deceptive density.
+        """
+        total_deductions = 0
+        category_breakdown = {}
+        severity_breakdown = {"High": 0, "Medium": 0, "Low": 0}
+
+        for item in request.patterns:
+            cat = item.category
+            if not cat or cat == "Not Dark Pattern":
+                continue
+            
+            category_breakdown[cat] = category_breakdown.get(cat, 0) + 1
+            cfg = SEVERITY_CONFIG.get(cat, {"penalty": 12, "severity": "Medium"})
+            total_deductions += cfg["penalty"]
+            severity_breakdown[cfg["severity"]] = severity_breakdown.get(cfg["severity"], 0) + 1
+
+        # Cap deductions at 100, score bounds [0, 100]
+        safety_score = max(0, min(100, 100 - total_deductions))
+        total_dp = sum(category_breakdown.values())
+
+        if safety_score >= 90:
+            letter_grade = "A"
+            risk_level = "Safe"
+            summary_message = "Clean website. No significant deceptive design tactics found."
+        elif safety_score >= 75:
+            letter_grade = "B"
+            risk_level = "Low Risk"
+            summary_message = "Mostly safe. Minor marketing pressure tactics detected."
+        elif safety_score >= 50:
+            letter_grade = "C"
+            risk_level = "Moderate Risk"
+            summary_message = "Exercise caution. Multiple manipulative patterns detected."
+        elif safety_score >= 30:
+            letter_grade = "D"
+            risk_level = "High Risk"
+            summary_message = "High risk of deception. Sneaky charges or forced actions likely."
+        else:
+            letter_grade = "F"
+            risk_level = "Critical"
+            summary_message = "Severe deceptive design. Aggressive manipulation detected across UI."
+
+        return SiteEvaluationResponse(
+            page_url=request.page_url,
+            safety_score=safety_score,
+            letter_grade=letter_grade,
+            risk_level=risk_level,
+            total_dark_patterns=total_dp,
+            category_breakdown=category_breakdown,
+            severity_breakdown=severity_breakdown,
+            summary_message=summary_message
+        )
+

@@ -35,6 +35,26 @@ const flaggedCountdowns = new Set();
 // Ignore mutation records created by Dark-Guard highlights
 const ignoredMutationTargets = new WeakSet();
 
+// Store detected dark patterns for popup reporting
+const pageDetections = {
+    texts: [],
+    images: [],
+    countdowns: []
+};
+
+function notifyBadgeUpdate() {
+    const total = pageDetections.texts.length + pageDetections.images.length + pageDetections.countdowns.length;
+    try {
+        if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+            chrome.runtime.sendMessage({ action: "updateBadge", count: total }, () => {
+                if (chrome.runtime.lastError) {
+                    // Suppress if background listener not ready
+                }
+            });
+        }
+    } catch (e) {}
+}
+
 // Used for MutationObserver debounce
 let detectionTimeout = null;
 
@@ -53,71 +73,112 @@ function normalizeText(text) {
 
 let textIntersectionObserver = null;
 
+function extractCandidateFromElement(element) {
+    const candidateText = element.innerText?.trim();
+    if (!candidateText || candidateText.length < 4 || candidateText.length > 500) return null;
+    
+    const normalizedCandidateText = normalizeText(candidateText);
+    if (!normalizedCandidateText || analyzedTexts.has(normalizedCandidateText)) return null;
+    
+    // Prefer the smallest candidate (skip if any descendant contains the same meaningful text)
+    const hasMeaningfulDescendant = [...element.querySelectorAll(
+        "p, span, div, button, a, h1, h2, h3, h4, h5, label"
+    )].some(descendant => {
+        const descendantText = descendant.innerText?.trim();
+        const normalizedDescendantText = descendantText && normalizeText(descendantText);
+        return normalizedDescendantText && (
+            normalizedDescendantText === normalizedCandidateText ||
+            normalizedCandidateText.includes(normalizedDescendantText)
+        );
+    });
+
+    if (hasMeaningfulDescendant) return null;
+
+    // Find meaningful context container
+    let container = element.parentElement;
+    while (container && container !== document.body) {
+        const containerText = container.innerText?.trim();
+        if (containerText && containerText.length > 20 && containerText.length <= 1000) {
+            break;
+        }
+        if (containerText && containerText.length > 1000) {
+            container = container.firstElementChild || container;
+            break;
+        }
+        container = container.parentElement;
+    }
+    const contextText = (container ? container.innerText : candidateText).trim().substring(0, 1000).replace(/\s+/g, " ");
+
+    return {
+        candidate_text: candidateText,
+        context: contextText,
+        normalized: normalizedCandidateText
+    };
+}
+
+function dispatchTextCheck(items) {
+    if (!items || items.length === 0) return Promise.resolve([]);
+
+    // Mark as in-flight / analyzed
+    items.forEach(item => analyzedTexts.add(item.normalized));
+
+    // Deduplicate by candidate_text
+    const uniqueMap = new Map();
+    items.forEach(item => {
+        if (!uniqueMap.has(item.candidate_text)) {
+            uniqueMap.set(item.candidate_text, item);
+        }
+    });
+    const uniqueTexts = Array.from(uniqueMap.values());
+
+    console.log(`Dark-Guard: Dispatching ${uniqueTexts.length} text snippet(s)...`);
+    return checkDarkPatterns(uniqueTexts).then(results => {
+        if (!results || results.length === 0) {
+            // Unmark on backend network failure so future attempts or retries can succeed
+            items.forEach(item => analyzedTexts.delete(item.normalized));
+            return [];
+        }
+
+        results.forEach(result => {
+            if (result.is_dark_pattern) {
+                if (!pageDetections.texts.some(t => t.text === result.candidate_text)) {
+                    pageDetections.texts.push({
+                        text: result.candidate_text,
+                        category: result.category,
+                        confidence: result.confidence
+                    });
+                    notifyBadgeUpdate();
+                }
+            }
+            highlightDarkPattern(result);
+        });
+        return results;
+    }).catch(err => {
+        items.forEach(item => analyzedTexts.delete(item.normalized));
+        return [];
+    });
+}
+
 function initTextObserver() {
     if (textIntersectionObserver) return;
     
     textIntersectionObserver = new IntersectionObserver((entries) => {
-        const visibleTexts = [];
+        const visibleItems = [];
         
         entries.forEach(entry => {
             if (entry.isIntersecting) {
                 const element = entry.target;
                 textIntersectionObserver.unobserve(element);
                 
-                const candidateText = element.innerText?.trim();
-                if (!candidateText || candidateText.length < 4 || candidateText.length > 500) return;
-                
-                const normalizedCandidateText = normalizeText(candidateText);
-                if (!normalizedCandidateText || analyzedTexts.has(normalizedCandidateText)) return;
-                
-                // Prefer the smallest candidate
-                const hasMeaningfulDescendant = [...element.querySelectorAll(
-                    "p, span, div, button, a, h1, h2, h3, h4, h5, label"
-                )].some(descendant => {
-                    const descendantText = descendant.innerText?.trim();
-                    const normalizedDescendantText = descendantText && normalizeText(descendantText);
-                    return normalizedDescendantText && (
-                        normalizedDescendantText === normalizedCandidateText ||
-                        normalizedCandidateText.includes(normalizedDescendantText)
-                    );
-                });
-
-                if (hasMeaningfulDescendant) return;
-
-                // Find meaningful context container
-                let container = element.parentElement;
-                while (container && container !== document.body) {
-                    const containerText = container.innerText?.trim();
-                    if (containerText && containerText.length > 20 && containerText.length <= 1000) {
-                        break;
-                    }
-                    if (containerText && containerText.length > 1000) {
-                        container = container.firstElementChild || container;
-                        break;
-                    }
-                    container = container.parentElement;
+                const item = extractCandidateFromElement(element);
+                if (item) {
+                    visibleItems.push(item);
                 }
-                const contextText = (container ? container.innerText : candidateText).trim().substring(0, 1000).replace(/\s+/g, " ");
-
-                analyzedTexts.add(normalizedCandidateText);
-                visibleTexts.push({ candidate_text: candidateText, context: contextText });
             }
         });
         
-        if (visibleTexts.length > 0) {
-            // Deduplicate by candidate_text
-            const uniqueMap = new Map();
-            visibleTexts.forEach(item => {
-                if (!uniqueMap.has(item.candidate_text)) {
-                    uniqueMap.set(item.candidate_text, item);
-                }
-            });
-            const uniqueTexts = Array.from(uniqueMap.values());
-
-            console.log(`Dark-Guard: ${uniqueTexts.length} text snippet(s) became visible, scanning contextual blocks...`);
-            checkDarkPatterns(uniqueTexts).then(results => {
-                results.forEach(result => highlightDarkPattern(result));
-            });
+        if (visibleItems.length > 0) {
+            dispatchTextCheck(visibleItems);
         }
     }, { rootMargin: "300px" });
 }
@@ -180,12 +241,11 @@ function highlightDarkPattern(result) {
         textNodes.push(walker.currentNode);
     }
 
+    let anyHighlighted = false;
+
     textNodes.forEach(node => {
         const nodeText = node.nodeValue;
-
-        if (!nodeText || !nodeText.includes(targetText)) {
-            return;
-        }
+        if (!nodeText) return;
 
         // Don't highlight our own generated elements
         if (node.parentElement?.closest(".dark-pattern-highlight")) {
@@ -194,9 +254,13 @@ function highlightDarkPattern(result) {
 
         const wasHighlighted = createHighlight(node, targetText, result);
         if (wasHighlighted) {
-            highlightedTexts.add(normalizedTargetText);
+            anyHighlighted = true;
         }
     });
+
+    if (anyHighlighted) {
+        highlightedTexts.add(normalizedTargetText);
+    }
 }
 
 
@@ -206,18 +270,38 @@ function highlightDarkPattern(result) {
 
 function createHighlight(node, targetText, result) {
     const text = node.nodeValue;
-    const index = text.indexOf(targetText);
+    if (!text) return false;
+
+    let index = text.indexOf(targetText);
+    let matchedLength = targetText.length;
 
     if (index === -1) {
-        return false;
+        // Try case-insensitive matching
+        const lowerText = text.toLowerCase();
+        const lowerTarget = targetText.toLowerCase();
+        index = lowerText.indexOf(lowerTarget);
+        if (index === -1) {
+            // Try normalized whitespace matching
+            const normTarget = targetText.replace(/\s+/g, " ").trim().toLowerCase();
+            const lowerNormText = text.replace(/\s+/g, " ").toLowerCase();
+            index = lowerNormText.indexOf(normTarget);
+            if (index === -1) {
+                return false;
+            }
+            const firstWord = normTarget.split(" ")[0];
+            index = lowerText.indexOf(firstWord);
+            if (index === -1) return false;
+            matchedLength = Math.min(normTarget.length, text.length - index);
+        }
     }
 
     const before = text.substring(0, index);
-    const after = text.substring(index + targetText.length);
+    const matched = text.substring(index, index + matchedLength);
+    const after = text.substring(index + matchedLength);
 
     // Create highlight span
     const span = document.createElement("span");
-    span.textContent = targetText;
+    span.textContent = matched;
     span.className = "dark-pattern-highlight";
 
     const confidence = (result.confidence * 100).toFixed(1);
@@ -280,6 +364,46 @@ function getImageDataOrUrl(imgElement) {
 
 let imageIntersectionObserver = null;
 
+function dispatchImageCheck(images) {
+    if (!images || images.length === 0) return Promise.resolve([]);
+
+    console.log(`Dark-Guard: Dispatching ${images.length} image(s) to OCR pipeline...`);
+    return checkImageDarkPatterns(images).then(imageResults => {
+        if (!imageResults || imageResults.length === 0) {
+            images.forEach(img => {
+                const src = img.element?.currentSrc || img.element?.src;
+                if (src) analyzedImages.delete(src);
+            });
+            return [];
+        }
+
+        imageResults.forEach(imgResult => {
+            if (imgResult.has_dark_pattern && imgResult.detections) {
+                console.log("⚠️ DARK PATTERN (IMAGE):", imgResult);
+                imgResult.detections.filter(d => d.is_dark_pattern).forEach(d => {
+                    if (!pageDetections.images.some(existing => existing.image_id === imgResult.image_id && existing.text === d.text)) {
+                        pageDetections.images.push({
+                            image_id: imgResult.image_id,
+                            text: d.text,
+                            category: d.category,
+                            confidence: d.confidence
+                        });
+                    }
+                });
+                notifyBadgeUpdate();
+                highlightImageDarkPattern(imgResult);
+            }
+        });
+        return imageResults;
+    }).catch(err => {
+        images.forEach(img => {
+            const src = img.element?.currentSrc || img.element?.src;
+            if (src) analyzedImages.delete(src);
+        });
+        return [];
+    });
+}
+
 function initImageObserver() {
     if (imageIntersectionObserver) return;
     
@@ -316,15 +440,7 @@ function initImageObserver() {
         });
         
         if (visibleImages.length > 0) {
-            console.log(`Dark-Guard: ${visibleImages.length} image(s) became visible, scanning now...`);
-            checkImageDarkPatterns(visibleImages).then(imageResults => {
-                imageResults.forEach(imgResult => {
-                    if (imgResult.has_dark_pattern) {
-                        console.log("⚠️ DARK PATTERN (IMAGE):", imgResult);
-                        highlightImageDarkPattern(imgResult);
-                    }
-                });
-            });
+            dispatchImageCheck(visibleImages);
         }
     }, { rootMargin: "300px" }); // Start scanning slightly before they appear on screen
 }
@@ -391,6 +507,20 @@ function highlightImageDarkPattern(result) {
     if (darkDetections.length === 0) {
         return;
     }
+
+    // Record into pageDetections for popup
+    darkDetections.forEach(det => {
+        if (!pageDetections.images.some(img => img.image_id === imgId && img.text === det.text)) {
+            pageDetections.images.push({
+                image_id: imgId,
+                text: det.text,
+                category: det.category,
+                confidence: det.confidence,
+                ocr_confidence: det.ocr_confidence
+            });
+            notifyBadgeUpdate();
+        }
+    });
 
     // Mark as highlighted to prevent re-processing
     highlightedImages.add(imgId);
@@ -748,6 +878,15 @@ function highlightCountdownDarkPattern(el, persistentSelector, result) {
     }
     flaggedCountdowns.add(persistentSelector);
 
+    // Record into pageDetections for popup
+    pageDetections.countdowns.push({
+        selector: persistentSelector,
+        category: result.category || "FAKE_COUNTDOWN",
+        confidence: result.confidence,
+        text: (el.innerText || "Countdown Timer").trim().slice(0, 50)
+    });
+    notifyBadgeUpdate();
+
     // 1. Outline the timer element itself
     el.classList.add("dark-pattern-countdown-highlight");
 
@@ -794,19 +933,36 @@ async function runTextDetector() {
     const elements = document.querySelectorAll(
         "p, span, div, button, a, h1, h2, h3, h4, h5, label"
     );
+    const immediateBatch = [];
     let queuedCount = 0;
 
     elements.forEach(el => {
         if (!el.dataset.darkguardTextObserved) {
             el.dataset.darkguardTextObserved = "true";
-            textIntersectionObserver.observe(el);
-            queuedCount++;
+
+            const rect = el.getBoundingClientRect();
+            const inViewport = (
+                rect.top < (window.innerHeight || document.documentElement.clientHeight) + 200 &&
+                rect.bottom > -100
+            );
+
+            if (inViewport) {
+                const item = extractCandidateFromElement(el);
+                if (item) {
+                    immediateBatch.push(item);
+                }
+            } else {
+                textIntersectionObserver.observe(el);
+                queuedCount++;
+            }
         }
     });
 
-    if (queuedCount > 0) {
-        console.log(`Dark-Guard: Queued ${queuedCount} text element(s) for lazy scanning...`);
+    if (immediateBatch.length > 0) {
+        console.log(`Dark-Guard: Instant scanning ${immediateBatch.length} text element(s) in viewport...`);
+        return dispatchTextCheck(immediateBatch);
     }
+    return Promise.resolve([]);
 }
 
 
@@ -818,6 +974,7 @@ async function runImageDetector() {
     initImageObserver();
 
     const imgElements = document.querySelectorAll("img");
+    const immediateImages = [];
     let queuedCount = 0;
     
     imgElements.forEach((img) => {
@@ -831,14 +988,42 @@ async function runImageDetector() {
 
         if (!img.dataset.darkguardObserved) {
             img.dataset.darkguardObserved = "true";
-            imageIntersectionObserver.observe(img);
-            queuedCount++;
+
+            if (!img.dataset.darkguardImgId) {
+                img.dataset.darkguardImgId = `dg-img-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+            }
+
+            const src = img.currentSrc || img.src;
+            if (!src || analyzedImages.has(src)) return;
+
+            const rect = img.getBoundingClientRect();
+            const inViewport = (
+                rect.top < (window.innerHeight || document.documentElement.clientHeight) + 200 &&
+                rect.bottom > -100
+            );
+
+            if (inViewport) {
+                const imagePayload = getImageDataOrUrl(img);
+                if (imagePayload) {
+                    analyzedImages.add(src);
+                    immediateImages.push({
+                        image_id: img.dataset.darkguardImgId,
+                        image: imagePayload,
+                        element: img
+                    });
+                }
+            } else {
+                imageIntersectionObserver.observe(img);
+                queuedCount++;
+            }
         }
     });
     
-    if (queuedCount > 0) {
-        console.log(`Dark-Guard: Queued ${queuedCount} image(s) for lazy scanning...`);
+    if (immediateImages.length > 0) {
+        console.log(`Dark-Guard: Instant scanning ${immediateImages.length} image(s) in viewport...`);
+        return dispatchImageCheck(immediateImages);
     }
+    return Promise.resolve([]);
 }
 
 
@@ -867,11 +1052,11 @@ async function runCountdownDetector() {
 // ============================================
 
 async function runDetector() {
-    console.log("Dark-Guard: Scanning webpage for text and countdown timers (Image scanning temporarily disabled)...");
+    console.log("Dark-Guard: Scanning webpage for text, images, and countdown timers...");
 
     await Promise.allSettled([
         runTextDetector(),
-        // runImageDetector(), // Temporarily disabled as requested
+        runImageDetector(),
         runCountdownDetector()
     ]);
 }
@@ -931,3 +1116,72 @@ observer.observe(
         characterData: true
     }
 );
+
+
+// ============================================
+// 17. POPUP & EXTENSION COMMUNICATION LISTENERS
+// ============================================
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "getPageSummary") {
+        const total = pageDetections.texts.length + pageDetections.images.length + pageDetections.countdowns.length;
+        sendResponse({
+            success: true,
+            url: location.href,
+            hostname: location.hostname,
+            title: document.title,
+            detections: pageDetections,
+            totalCount: total
+        });
+        return false;
+    }
+
+    if (request.action === "triggerRescan") {
+        analyzedTexts.clear();
+        analyzedImages.clear();
+        flaggedCountdowns.clear();
+        highlightedTexts.clear();
+        highlightedImages.clear();
+        pageDetections.texts = [];
+        pageDetections.images = [];
+        pageDetections.countdowns = [];
+        notifyBadgeUpdate();
+
+        // Clear dataset tracking attributes so elements can be observed and scanned again
+        document.querySelectorAll("[data-darkguard-text-observed]").forEach(el => delete el.dataset.darkguardTextObserved);
+        document.querySelectorAll("[data-darkguard-observed]").forEach(el => delete el.dataset.darkguardObserved);
+        document.querySelectorAll("[data-darkguard-img-id]").forEach(el => delete el.dataset.darkguardImgId);
+
+        // Remove old visual markers from DOM
+        document.querySelectorAll(".dark-pattern-highlight").forEach(span => {
+            const parent = span.parentNode;
+            if (parent) {
+                parent.replaceChild(document.createTextNode(span.textContent), span);
+                parent.normalize();
+            }
+        });
+        document.querySelectorAll(".dark-pattern-img-badge, .dark-pattern-bbox-overlay, .dark-pattern-countdown-badge").forEach(el => el.remove());
+        document.querySelectorAll(".dark-pattern-img-highlight").forEach(el => el.classList.remove("dark-pattern-img-highlight"));
+        document.querySelectorAll(".dark-pattern-countdown-highlight").forEach(el => el.classList.remove("dark-pattern-countdown-highlight"));
+
+        runDetector().then(() => {
+            // Give async callbacks a brief tick to populate detections
+            setTimeout(() => {
+                const total = pageDetections.texts.length + pageDetections.images.length + pageDetections.countdowns.length;
+                sendResponse({
+                    success: true,
+                    totalCount: total,
+                    detections: pageDetections
+                });
+            }, 300);
+        });
+        return true;
+    }
+
+    if (request.action === "toggleHighlightsVisibility") {
+        document.body.classList.toggle("darkguard-highlights-hidden");
+        const isHidden = document.body.classList.contains("darkguard-highlights-hidden");
+        sendResponse({ success: true, isHidden });
+        return false;
+    }
+});

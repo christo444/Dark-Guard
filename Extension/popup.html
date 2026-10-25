@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dark-Guard</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="popup-container">
+        <!-- Header -->
+        <header class="popup-header">
+            <div class="brand">
+                <div class="logo-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <path d="M9 12l2 2 4-4"/>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <h1>Dark-Guard</h1>
+                    <span class="version-badge">v1.1 AI</span>
+                </div>
+            </div>
+            <div class="site-badge" id="siteDomain" title="Active Tab Domain">
+                <span class="status-dot"></span>
+                <span class="domain-text">Detecting...</span>
+            </div>
+        </header>
+
+        <!-- Trust Score Hero Card -->
+        <section class="score-card" id="scoreCard">
+            <div class="score-left">
+                <div class="score-dial">
+                    <span class="score-number" id="safetyScore">--</span>
+                    <span class="score-max">/100</span>
+                </div>
+                <div class="grade-pill" id="letterGrade">--</div>
+            </div>
+            <div class="score-right">
+                <div class="risk-badge" id="riskBadge">ANALYZING PAGE</div>
+                <p class="summary-text" id="summaryMessage">Scanning page text, image banners, and countdown timers...</p>
+            </div>
+        </section>
+
+        <!-- Threat Metric Counters -->
+        <div class="stats-grid">
+            <div class="stat-box">
+                <span class="stat-count" id="countTotal">0</span>
+                <span class="stat-label">Total Tactics</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-count text-accent" id="countText">0</span>
+                <span class="stat-label">DOM Text</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-count img-accent" id="countImages">0</span>
+                <span class="stat-label">OCR Banners</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-count timer-accent" id="countTimers">0</span>
+                <span class="stat-label">Fake Timers</span>
+            </div>
+        </div>
+
+        <!-- Category Breakdown -->
+        <section class="section-container">
+            <div class="section-title">
+                <span>Category Breakdown</span>
+                <span class="section-tag" id="breakdownTag">0 Types</span>
+            </div>
+            <div class="category-pills" id="categoryPills">
+                <div class="empty-hint">No deceptive categories detected.</div>
+            </div>
+        </section>
+
+        <!-- Live Detections Feed -->
+        <section class="section-container">
+            <div class="section-title">
+                <span>Detected Patterns</span>
+                <span class="section-tag" id="detectionsCountTag">0 Found</span>
+            </div>
+            <div class="detections-feed" id="detectionsFeed">
+                <div class="empty-feed">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 16v-4"/>
+                        <path d="M12 8h.01"/>
+                    </svg>
+                    <span>No dark patterns currently visible on screen.</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Action Buttons -->
+        <footer class="popup-footer">
+            <button class="btn btn-primary" id="btnRescan" title="Force a full page re-scan">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <polyline points="1 20 1 14 7 14"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                <span>Re-Scan</span>
+            </button>
+            <button class="btn btn-secondary" id="btnToggleHighlights" title="Toggle highlight visibility on page">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span id="toggleText">Hide Marks</span>
+            </button>
+            <button class="btn btn-icon" id="btnCopyAudit" title="Copy audit report to clipboard">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+            </button>
+        </footer>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

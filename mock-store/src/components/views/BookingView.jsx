@@ -46,8 +46,8 @@ const BookingView = () => {
 
               <div style={{ marginTop: '16px', background: '#fef2f2', padding: '12px', borderRadius: '6px', border: '1px solid #fecaca', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                 <input type="checkbox" defaultChecked id="insurance" style={{ marginTop: '3px' }} />
-                <label htmlFor="insurance" style={{ fontSize: '0.85rem', cursor: 'pointer', fontWeight: '600' }}>
-                  Add Trip Protection (Recommended). Includes cancellation coverage for $39.99/person.
+                <label htmlFor="insurance" style={{ fontSize: '0.85rem', cursor: 'pointer' }}>
+                  <strong>Add Trip Protection</strong> (Recommended). Includes cancellation coverage for $39.99/person.
                 </label>
               </div>
 

@@ -17,13 +17,10 @@ class BertModel:
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_dir)
         
-        # Load the custom label map provided by Student 1
-        label_map_path = os.path.join(model_dir, "label_map.json")
-        if os.path.exists(label_map_path):
-            with open(label_map_path, "r") as f:
-                self.label_map = json.load(f)
-        else:
-            print("Warning: label_map.json not found! Using fallback labels.")
+        # Multi-class label map is usually stored in config.json (id2label)
+        self.label_map = self.model.config.id2label if self.model.config.id2label else {}
+        if not self.label_map:
+            print("Warning: id2label not found in config! Using fallback labels.")
             self.label_map = {"0": "Not Dark Pattern", "1": "Dark Pattern"}
             
         print("Model loaded successfully!")
@@ -36,21 +33,16 @@ class BertModel:
         with torch.no_grad():
             outputs = self.model(**inputs)
             
-        # Calculate logit difference between Class 1 (Dark Pattern) and Class 0
-        logits = outputs.logits[0].tolist()
-        logit_diff = logits[1] - logits[0]
+        # Calculate probabilities using softmax
+        logits = outputs.logits[0]
+        probs = torch.nn.functional.softmax(logits, dim=0)
         
-        # Use native prediction without artificial thresholding to expose model behavior
-        is_dark_pattern = logits[1] > logits[0]
+        # Get the predicted class ID
+        predicted_class_idx = torch.argmax(probs).item()
+        confidence = probs[predicted_class_idx].item()
         
-        if is_dark_pattern:
-            predicted_class_id = "1"
-            confidence = torch.nn.functional.sigmoid(torch.tensor(logit_diff)).item()
-        else:
-            predicted_class_id = "0"
-            confidence = 1.0 - torch.nn.functional.sigmoid(torch.tensor(logit_diff)).item()
-            
-        category = self.label_map.get(predicted_class_id, "Unknown")
+        predicted_class_id = str(predicted_class_idx)
+        category = self.label_map.get(predicted_class_idx, self.label_map.get(predicted_class_id, "Unknown"))
         
         return {
             "is_dark_pattern": category != "Not Dark Pattern",

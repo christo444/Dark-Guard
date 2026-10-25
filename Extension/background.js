@@ -8,11 +8,23 @@ const API_URL = "http://localhost:8000/predict";
 const IMAGE_API_URL = "http://localhost:8000/predict-image";
 const BATCH_IMAGE_API_URL = "http://localhost:8000/predict-images";
 const COUNTDOWN_API_URL = "http://localhost:8000/verify-countdown";
+const EVALUATE_API_URL = "http://localhost:8000/evaluate-site";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     try {
         console.log("Background received message:", request.action);
         let url = "";
+
+        if (request.action === "updateBadge") {
+            const count = request.count || 0;
+            const tabId = sender.tab ? sender.tab.id : null;
+            if (tabId) {
+                chrome.action.setBadgeText({ tabId: tabId, text: count > 0 ? String(count) : "" });
+                chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: count > 0 ? "#e53e3e" : "#38a169" });
+            }
+            sendResponse({ success: true });
+            return false;
+        }
 
         if (request.action === "predictText") {
             url = API_URL;
@@ -22,6 +34,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             url = BATCH_IMAGE_API_URL;
         } else if (request.action === "verifyCountdown") {
             url = COUNTDOWN_API_URL;
+        } else if (request.action === "evaluateSite") {
+            url = EVALUATE_API_URL;
         } else {
             console.warn("Unknown action:", request.action);
             sendResponse({ success: false, error: "Unknown action" });

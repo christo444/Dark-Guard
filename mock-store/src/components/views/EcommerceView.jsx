@@ -10,7 +10,7 @@ const products = [
     category: 'Audio',
     price: 189.99,
     oldPrice: 249.99,
-    image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80',
+    image: '/dp_images/social_proof.png',
     type: 'urgency' // Dark Pattern
   },
   {
@@ -19,7 +19,7 @@ const products = [
     category: 'Wearables',
     price: 129.99,
     oldPrice: 179.99,
-    image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500&q=80',
+    image: '/dp_images/sneaking.png',
     type: 'social' // Dark Pattern
   },
   {
@@ -95,8 +95,8 @@ const EcommerceView = ({ openCheckout }) => {
           </button>
         </div>
         <img 
-          src="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&q=80" 
-          alt="Headphones" 
+          src="/dp_images/urgency_banner.png" 
+          alt="Banner" 
           className="hero-image"
         />
       </section>

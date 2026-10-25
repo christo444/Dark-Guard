@@ -11,6 +11,8 @@ from models.schemas import (
     CountdownVerifyResponse,
     BatchCountdownVerifyRequest,
     BatchCountdownVerifyResponse,
+    SiteEvaluationRequest,
+    SiteEvaluationResponse,
 )
 from services.predictor import PredictorService
 # pyrefly: ignore [missing-import]
@@ -25,7 +27,7 @@ app = FastAPI(
 # Allow CORS for the Chrome Extension
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this in production
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,3 +98,10 @@ def verify_countdowns(request: BatchCountdownVerifyRequest):
         return BatchCountdownVerifyResponse(results=results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/evaluate-site", response_model=SiteEvaluationResponse)
+def evaluate_site(request: SiteEvaluationRequest):
+    try:
+        return predictor_service.evaluate_site(request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -74,8 +74,8 @@ const ProductCard = ({ product, type }) => {
       {type === 'sneak' && (
         <div style={{ fontSize: '0.85rem', marginBottom: '16px', background: '#f8fafc', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
           <input type="checkbox" defaultChecked id={`sneak-${product.id}`} style={{ marginTop: '3px' }} />
-          <label htmlFor={`sneak-${product.id}`} style={{ cursor: 'pointer', color: '#0f172a', fontWeight: '600' }}>
-            Yes, protect my purchase! Add 2-year premium warranty for only $14.99.
+          <label htmlFor={`sneak-${product.id}`} style={{ cursor: 'pointer', color: '#64748b' }}>
+            <strong style={{ color: '#0f172a' }}>Yes, protect my purchase!</strong> Add 2-year premium warranty for only $14.99.
           </label>
         </div>
       )}

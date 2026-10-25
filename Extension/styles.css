@@ -85,3 +85,23 @@
     pointer-events: none !important;
     white-space: nowrap !important;
 }
+
+/* Toggle hidden state for user control */
+body.darkguard-highlights-hidden .dark-pattern-highlight {
+    background-color: transparent !important;
+    color: inherit !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+body.darkguard-highlights-hidden .dark-pattern-img-badge,
+body.darkguard-highlights-hidden .dark-pattern-bbox-overlay,
+body.darkguard-highlights-hidden .dark-pattern-countdown-badge {
+    display: none !important;
+}
+
+body.darkguard-highlights-hidden .dark-pattern-img-highlight,
+body.darkguard-highlights-hidden .dark-pattern-countdown-highlight {
+    outline: none !important;
+    box-shadow: none !important;
+}
