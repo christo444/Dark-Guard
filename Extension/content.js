@@ -120,10 +120,22 @@ function normalizeText(text) {
 // ============================================
 
 let textIntersectionObserver = null;
+const textPriorityQueue = [];
+let isProcessingTextQueue = false;
+const MICRO_BATCH_SIZE = 6;
 
 function extractCandidateFromElement(element) {
     const candidateText = element.innerText?.trim();
     if (!candidateText || candidateText.length < 4 || candidateText.length > 500) return null;
+
+    // Trivial Navigation Filter - ignore generic navigation words/links that waste inference
+    const TRIVIAL_NAV_PATTERN = /^(home|cart|basket|bag|orders?|account|sign in|sign up|log in|log out|help|support|contact us|privacy policy|terms of service|terms & conditions|return policy|careers|about us|track order|menu|search|categories|all categories|shop now|view all|see more|learn more|close|back|cancel|ok|yes|no)$/i;
+    if (TRIVIAL_NAV_PATTERN.test(candidateText)) return null;
+
+    // Filter single mundane words that don't have numbers or urgency tokens
+    if (candidateText.split(/\s+/).length === 1 && !/\d|!|\$|%/.test(candidateText)) {
+        return null;
+    }
     
     const normalizedCandidateText = normalizeText(candidateText);
     if (!normalizedCandidateText || analyzedTexts.has(normalizedCandidateText)) return null;
@@ -162,6 +174,42 @@ function extractCandidateFromElement(element) {
         context: contextText,
         normalized: normalizedCandidateText
     };
+}
+
+function enqueueTextItems(items) {
+    if (!items || items.length === 0) return;
+
+    items.forEach(item => {
+        if (!analyzedTexts.has(item.normalized)) {
+            analyzedTexts.add(item.normalized);
+            textPriorityQueue.push(item);
+        }
+    });
+
+    // Dynamic Top-to-Bottom sorting: elements higher on screen are analyzed first!
+    textPriorityQueue.sort((a, b) => (a.top ?? 0) - (b.top ?? 0));
+
+    processTextQueue();
+}
+
+async function processTextQueue() {
+    if (isProcessingTextQueue || textPriorityQueue.length === 0) {
+        return;
+    }
+
+    isProcessingTextQueue = true;
+    const batch = textPriorityQueue.splice(0, MICRO_BATCH_SIZE);
+
+    try {
+        await dispatchTextCheck(batch);
+    } catch (err) {
+        console.error("Dark-Guard: Error processing text micro-batch:", err);
+    } finally {
+        isProcessingTextQueue = false;
+        if (textPriorityQueue.length > 0) {
+            setTimeout(processTextQueue, 15);
+        }
+    }
 }
 
 function dispatchTextCheck(items) {
@@ -220,15 +268,17 @@ function initTextObserver() {
                 
                 const item = extractCandidateFromElement(element);
                 if (item) {
+                    const rect = element.getBoundingClientRect();
+                    item.top = rect.top + window.scrollY;
                     visibleItems.push(item);
                 }
             }
         });
         
         if (visibleItems.length > 0) {
-            dispatchTextCheck(visibleItems);
+            enqueueTextItems(visibleItems);
         }
-    }, { rootMargin: "300px" });
+    }, { rootMargin: "80px" });
 }
 
 
@@ -452,6 +502,30 @@ function dispatchImageCheck(images) {
     });
 }
 
+function isPromotionalBannerCandidate(img) {
+    const width = img.naturalWidth || img.width || img.clientWidth || 0;
+    const height = img.naturalHeight || img.height || img.clientHeight || 0;
+
+    // Ignore tiny utility icons, tracking pixels, bullets (<40px)
+    if (width > 0 && height > 0 && (width < 40 || height < 40)) {
+        return false;
+    }
+
+    const aspect = width / (height || 1);
+    // Promotional banners are typically wide ribbons or tall promo coupons/modals
+    const isWideBanner = (aspect >= 1.6 && width >= 250);
+    const isTallPromo = (aspect <= 0.65 && height >= 200);
+
+    const promoKeyword = /banner|promo|deal|sale|discount|urgency|badge|hero|modal|popup|coupon|offer|flash/i;
+    const hasPromoAttr = promoKeyword.test(img.className || "") || 
+                         promoKeyword.test(img.id || "") || 
+                         promoKeyword.test(img.alt || "") ||
+                         promoKeyword.test(img.getAttribute("aria-label") || "");
+
+    // Skip generic square product catalog thumbnails to prevent heavy EasyOCR bottlenecks
+    return (isWideBanner || isTallPromo || hasPromoAttr);
+}
+
 function initImageObserver() {
     if (imageIntersectionObserver) return;
     
@@ -463,6 +537,10 @@ function initImageObserver() {
                 const img = entry.target;
                 imageIntersectionObserver.unobserve(img); // Only scan once!
                 
+                if (!isPromotionalBannerCandidate(img)) {
+                    return;
+                }
+
                 // Assign unique tracking ID if not present
                 if (!img.dataset.darkguardImgId) {
                     img.dataset.darkguardImgId = `dg-img-${Date.now()}-${Math.floor(Math.random()*1000)}`;
@@ -488,9 +566,10 @@ function initImageObserver() {
         });
         
         if (visibleImages.length > 0) {
-            dispatchImageCheck(visibleImages);
+            // Throttle background OCR to top 2 banners to prevent thread contention
+            dispatchImageCheck(visibleImages.slice(0, 2));
         }
-    }, { rootMargin: "300px" }); // Start scanning slightly before they appear on screen
+    }, { rootMargin: "120px" });
 }
 
 
@@ -990,13 +1069,14 @@ async function runTextDetector() {
 
             const rect = el.getBoundingClientRect();
             const inViewport = (
-                rect.top < (window.innerHeight || document.documentElement.clientHeight) + 200 &&
-                rect.bottom > -100
+                rect.top < (window.innerHeight || document.documentElement.clientHeight) + 100 &&
+                rect.bottom > -50
             );
 
             if (inViewport) {
                 const item = extractCandidateFromElement(el);
                 if (item) {
+                    item.top = rect.top + window.scrollY;
                     immediateBatch.push(item);
                 }
             } else {
@@ -1007,8 +1087,8 @@ async function runTextDetector() {
     });
 
     if (immediateBatch.length > 0) {
-        console.log(`Dark-Guard: Instant scanning ${immediateBatch.length} text element(s) in viewport...`);
-        return dispatchTextCheck(immediateBatch);
+        console.log(`Dark-Guard: Streaming top-to-bottom ${immediateBatch.length} text element(s) in viewport...`);
+        enqueueTextItems(immediateBatch);
     }
     return Promise.resolve([]);
 }
@@ -1026,11 +1106,7 @@ async function runImageDetector() {
     let queuedCount = 0;
     
     imgElements.forEach((img) => {
-        const width = img.naturalWidth || img.width || img.clientWidth;
-        const height = img.naturalHeight || img.height || img.clientHeight;
-
-        // Ignore tiny utility icons, tracking pixels, bullets (<40px)
-        if (width > 0 && height > 0 && (width < 40 || height < 40)) {
+        if (!isPromotionalBannerCandidate(img)) {
             return;
         }
 
@@ -1068,8 +1144,9 @@ async function runImageDetector() {
     });
     
     if (immediateImages.length > 0) {
-        console.log(`Dark-Guard: Instant scanning ${immediateImages.length} image(s) in viewport...`);
-        return dispatchImageCheck(immediateImages);
+        const throttledImages = immediateImages.slice(0, 2);
+        console.log(`Dark-Guard: Background scanning ${throttledImages.length} promotional banner(s)...`);
+        return dispatchImageCheck(throttledImages);
     }
     return Promise.resolve([]);
 }
@@ -1086,7 +1163,7 @@ async function runCountdownDetector() {
         return;
     }
 
-    console.log("Dark-Guard: Candidate countdown timers to observe:", candidates.length);
+    console.log("Dark-Guard: Candidate countdown timers to observe in background:", candidates.length);
 
     // Fire-and-forget: each candidate observes itself for ~8s in the
     // background and reports in asynchronously, so this doesn't block
@@ -1096,17 +1173,26 @@ async function runCountdownDetector() {
 
 
 // ============================================
-// 14. MAIN DETECTOR (FUSION PIPELINE)
+// 14. MAIN DETECTOR (STREAMING + DECOUPLED PIPELINE)
 // ============================================
 
 async function runDetector() {
-    console.log("Dark-Guard: Scanning webpage for text, images, and countdown timers...");
+    console.log("Dark-Guard: Starting fast progressive text detection...");
 
-    await Promise.allSettled([
-        runTextDetector(),
-        runImageDetector(),
-        runCountdownDetector()
-    ]);
+    // 1. Text detector starts immediately for ultra-fast top-to-bottom streaming
+    runTextDetector();
+
+    // 2. Schedule Image OCR and Countdown tracking in idle background
+    const scheduleBackgroundTasks = () => {
+        runCountdownDetector();
+        runImageDetector();
+    };
+
+    if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(scheduleBackgroundTasks, { timeout: 1500 });
+    } else {
+        setTimeout(scheduleBackgroundTasks, 1000);
+    }
 }
 
 
@@ -1185,6 +1271,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 
     if (request.action === "triggerRescan") {
+        textPriorityQueue.length = 0;
         analyzedTexts.clear();
         analyzedImages.clear();
         flaggedCountdowns.clear();
