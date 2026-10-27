@@ -327,49 +327,42 @@ Measured on real benchmark rows from training evaluations:
 ### Repository Directory Structure
 ```
 Dark-Guard/
-├── Extension/                      # Manifest V3 Chrome Extension
-│   ├── background.js               # Service worker for network and lifecycle events
-│   ├── content.js                  # DOM scraper, countdown observer, bounding box overlays
-│   ├── manifest.json               # Chrome extension manifest (MV3)
-│   └── styles.css                  # Warning badges, pulsating outlines, tooltips
+├── Extension/                          # Chrome Extension (Manifest V3)
+│   ├── background.js                   # Service worker, network proxy, badge counter
+│   ├── content.js                      # DOM scraper, viewport extractor, overlay injector
+│   ├── manifest.json                   # MV3 configuration & permissions
+│   ├── popup.html                      # Real-time popup dashboard interface
+│   ├── popup.js                        # Popup dynamic logic, rescan, log copy
+│   ├── popup.css                       # Dark-mode styling for popup dashboard
+│   └── styles.css                      # Warning badges, tooltips, pulsing outlines
 │
-├── backend/                        # FastAPI Inference Engine
-│   ├── main.py                     # App entry point & HTTP route definitions
-│   ├── requirements.txt            # Python dependencies (PyTorch, Transformers, EasyOCR, Pillow)
+├── backend/                            # FastAPI Inference & Database Engine
+│   ├── main.py                         # App entry, API routing, /dashboard HTML route
+│   ├── requirements.txt                # Python dependencies (PyTorch, Transformers, EasyOCR, Pillow)
+│   ├── darkguard.db                    # Persistent SQLite database file
 │   ├── models/
-│   │   ├── bert_model.py           # PyTorch & HuggingFace transformer wrapper
-│   │   ├── dummy_model.py          # Development fallback rule model
-│   │   └── schemas.py              # Pydantic data schemas
+│   │   ├── bert_model.py               # RoBERTa-large PyTorch inference wrapper
+│   │   ├── dummy_model.py              # Rule-based fallback model
+│   │   └── schemas.py                  # Pydantic request/response schemas
 │   ├── services/
-│   │   ├── countdown_service.py    # Temporal drift & reset verification for countdown timers
-│   │   ├── ocr_service.py          # EasyOCR image text & polygon coordinates extraction
-│   │   └── predictor.py            # Central inference coordinator + heuristic safety net
+│   │   ├── countdown_service.py        # Behavioral countdown timer verifier
+│   │   ├── db_service.py               # SQLite service (logging, review, export, stats)
+│   │   ├── ocr_service.py              # EasyOCR image text extraction service
+│   │   └── predictor.py                # Inference coordinator + heuristic safety net
 │   └── model_weights/
-│       └── darkguard-bert-final/   # Fine-tuned RoBERTa-large model (1.4 GB safetensors + config)
+│       └── darkguard-bert-final/       # Fine-tuned RoBERTa-large weights (1.42 GB)
 │
-├── demo_site/                      # Static testbed for visual and banner detection
-│   ├── index.html                  # HTML testbed with embedded timer and banners
-│   ├── generate_banners.py         # Pillow script to render test banners
-│   ├── generate_realistic_assets.py
-│   └── images/                     # Generated test assets
+├── test/                               # Unified Testing Suite & Testbeds
+│   ├── mock-store/                     # Full-stack React + Vite testbed
+│   ├── demo_site/                      # Static testbed for visual OCR & timers
+│   ├── test_database.py                # Automated SQLite unit tests
+│   ├── test_final_model.py             # Raw model benchmark script
+│   ├── test_ocr_and_timer.py           # OCR & countdown verification test suite
+│   ├── test_image_pipeline.py          # Synthetic image banner pipeline test
+│   └── verify_demo_live.py             # Live demo verification script
 │
-├── mock-store/                     # Full-stack React + Vite modern e-commerce simulator
-│   ├── src/
-│   │   ├── App.jsx                 # View navigation tabs  
-│   │   └── components/
-│   │       ├── CheckoutModal.jsx   # Sneaking testbed
-│   │       ├── NewsletterPopup.jsx # Confirmshaming testbed
-│   │       ├── LiveToast.jsx       # Social proof testbed
-│   │       └── views/
-│   │           ├── EcommerceView.jsx    # Urgency & OCR testbed
-│   │           ├── BookingView.jsx      # Scarcity testbed
-│   │           ├── SubscriptionView.jsx # Sneak billing testbed
-│   │           └── AccountView.jsx      # Hard-to-cancel testbed
-│   └── public/dp_images/           # Synthetic dark pattern image assets
-│
-├── implementation.md               # Master chronological project documentation
-├── test_final_model.py             # Diagnostic script for raw model evaluation
-└── verify_demo_live.py             # Diagnostic script for OCR & banner pipeline
+├── implementation.md                   # Master technical documentation & progress chronicle
+└── .gitignore                          # Git ignore rules
 ```
 
 ### Active API Endpoints Summary
@@ -426,9 +419,9 @@ python -m uvicorn main:app --reload --port 8000
 * The API will initialize EasyOCR, load the RoBERTa model weights from `model_weights/darkguard-bert-final`, and listen at `http://localhost:8000`.
 
 ### 2. Launch the Mock Store Testbed
-Open a second terminal in the `mock-store/` directory:
+Open a second terminal in the `test/mock-store/` directory:
 ```powershell
-cd "c:\Users\chris\OneDrive\Desktop\Main Project\Dark-Guard\mock-store"
+cd "c:\Users\chris\OneDrive\Desktop\Main Project\Dark-Guard\test\mock-store"
 npm run dev
 ```
 * The React application will serve at `http://localhost:5173/`.
