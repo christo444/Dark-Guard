@@ -7,6 +7,7 @@ console.log("Dark-Guard extension loaded!");
 
 const API_URL = "http://localhost:8000/predict";
 
+let isEnabled = true;
 
 // Store text that has already been analyzed
 const analyzedTexts = new Set();
@@ -68,7 +69,6 @@ function extractTexts() {
         if (!normalizedText || normalizedTexts.has(normalizedText)) {
             return;
         }
-
         // Prefer the smallest candidate containing this visible message.
         const hasMeaningfulDescendant = [...element.querySelectorAll(
             "p, span, div, button, a, h1, h2, h3, h4, h5, label"
@@ -84,12 +84,9 @@ function extractTexts() {
         if (hasMeaningfulDescendant) {
             return;
         }
-
         normalizedTexts.add(normalizedText);
         texts.push(text);
     });
-
-
     // Remove duplicate text
     return [...new Set(texts)];
 }
@@ -349,6 +346,10 @@ function createHighlight(
 
 async function runDetector() {
 
+    if (!isEnabled) {
+        return;
+    }
+
     console.log(
         "Dark-Guard: Scanning webpage..."
     );
@@ -430,12 +431,39 @@ async function runDetector() {
 
 }
 
+function clearHighlights() {
+    document.querySelectorAll(".dark-pattern-highlight").forEach(highlight => {
+        const parent = highlight.parentNode;
+
+        if (!parent) {
+            return;
+        }
+
+        ignoredMutationTargets.add(parent);
+        parent.replaceChild(
+            document.createTextNode(highlight.textContent || ""),
+            highlight
+        );
+    });
+
+    highlightedTexts.clear();
+}
+
 
 // ============================================
 // 6. INITIAL PAGE SCAN
 // ============================================
 
-runDetector();
+chrome.storage.local.get(
+    { enabled: true },
+    ({ enabled }) => {
+        isEnabled = enabled;
+
+        if (isEnabled) {
+            runDetector();
+        }
+    }
+);
 
 
 // ============================================
@@ -444,6 +472,10 @@ runDetector();
 
 const observer =
     new MutationObserver(mutations => {
+
+        if (!isEnabled) {
+            return;
+        }
 
         const ignoredTargetsInBatch = new Set();
 
@@ -498,3 +530,25 @@ observer.observe(
         characterData: true
     }
 );
+
+chrome.runtime.onMessage.addListener(message => {
+    if (message.type === "SET_ENABLED") {
+        isEnabled = message.enabled;
+        clearTimeout(detectionTimeout);
+
+        if (isEnabled) {
+            runDetector();
+        } else {
+            clearHighlights();
+        }
+    }
+
+    if (message.type === "SCAN_PAGE" && isEnabled) {
+        analyzedTexts.clear();
+        runDetector();
+    }
+
+    if (message.type === "CLEAR_HIGHLIGHTS") {
+        clearHighlights();
+    }
+});

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dark-Guard</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <main class="popup">
+        <h1>Dark-Guard</h1>
+
+        <label class="toggle-row">
+            <span>Detection enabled</span>
+            <input id="enabled-toggle" type="checkbox">
+        </label>
+
+        <button id="scan-button" type="button">Scan this page</button>
+        <button id="clear-button" class="secondary" type="button">
+            Clear highlights
+        </button>
+
+        <p id="status" role="status">Ready</p>
+    </main>
+
+    <script src="popup.js"></script>
+</body>
+</html>
